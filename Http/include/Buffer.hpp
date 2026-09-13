@@ -43,6 +43,12 @@
 class Buffer
 {
 public:
+    enum class LineMode
+    {
+        CRLF, // 以 "\r\n" 结束
+        LF    // 以 '\n' 结束
+    };
+
     // 初始可写空间，单位为字节；允许为 0，初始可读数据为空。
     explicit Buffer(std::size_t initial_size = BUFFER_DEFAULT_SIZE);
 
@@ -141,29 +147,35 @@ public:
     // （Write/EnsureWritableSize）之后即失效，应尽快使用。
     const char *FindCRLF() const noexcept;
 
-    // 返回包含结尾 CRLF 在内的一整行，并不消费该行；
-    // 缓冲区中没有完整 CRLF 时，返回空字符串且不消费任何数据。
-    // 注意：
-    // 真正的空行返回 "\r\n"，因此空字符串唯一表示"尚未收到完整行"。
+    // 在可读数据中查找第一个 '\n'，无需前置 '\r'。
+    // 找到返回指向 '\n' 的指针，未找到返回 nullptr；不消费数据。
+    // 指针有效期与 FindCRLF 相同，扩容或搬移后应重新获取。
+    const char *FindLF() const noexcept;
+
+    // 按指定模式查看一整行，包含结束符，不消费数据；默认使用 CRLF。
+    // 没有完整行时返回空字符串；空行返回对应结束符，二者可区分。
+    // LF 模式仅按 '\n' 分界，不删除前面的 '\r'。
     // 字符串构造失败时抛出异常且不消费数据。
-    std::string PeekLine() const
+    std::string PeekLine(LineMode mode = LineMode::CRLF) const
     {
-        const char *pos = FindCRLF();
+        const bool use_crlf = (mode == LineMode::CRLF);
+        const char *pos = use_crlf ? FindCRLF() : FindLF();
         if (pos == nullptr)
         {
             return {};
         }
-        const std::size_t length = static_cast<std::size_t>(pos - GetReadPosition()) + 2;
+        const std::size_t delimiter_size = use_crlf ? 2 : 1;
+        const std::size_t length =
+            static_cast<std::size_t>(pos - GetReadPosition()) + delimiter_size;
         return PeekAsString(length);
     }
 
-    // 返回包含结尾 CRLF 在内的一整行，并消费该行。
-    // 缓冲区中没有完整 CRLF 时返回空字符串且不消费任何数据。
-    // 空字符串唯一表示“尚未收到完整行”，真正的空行返回 "\r\n"。
+    // 按指定模式读取并消费整行，包含结束符；默认使用 CRLF。
+    // 未收到完整行时返回空字符串且不消费，LF 模式不删除回车。
     // 字符串构造失败时抛出异常且不消费数据。
-    std::string ReadLine()
+    std::string ReadLine(LineMode mode = LineMode::CRLF)
     {
-        std::string line = PeekLine();
+        std::string line = PeekLine(mode);
         // PeekLine 的返回长度即待消费字节数：未找到时为空串，消费 0 字节。
         MoveReadOffset(line.size());
         return line;

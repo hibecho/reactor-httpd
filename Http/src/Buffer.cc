@@ -7,7 +7,8 @@
 
 Buffer::Buffer(std::size_t initial_size)
     : _buffer(initial_size)
-{}
+{
+}
 
 Buffer::Buffer(Buffer &&other) noexcept
     : _buffer(std::move(other._buffer)),
@@ -180,4 +181,14 @@ const char *Buffer::FindCRLF() const noexcept
         ++p;
     }
     return nullptr;
+}
+
+const char *Buffer::FindLF() const noexcept
+{
+    const std::size_t readable = GetReadableSize();
+    if (readable == 0)
+    {
+        return nullptr;
+    }
+    return static_cast<const char *>(std::memchr(GetReadPosition(), '\n', readable));
 }
