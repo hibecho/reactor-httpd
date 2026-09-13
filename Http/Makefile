@@ -1,7 +1,7 @@
 all:TestBuffer
 
 TestBuffer:TestBuffer.cc Buffer.hpp Buffer.cc 
-	g++ -o $@ $^ -std=c++11
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++11 $(LDFLAGS) -o $@ $(filter %.cc,$^) $(LDLIBS)
 .PHONY:clean
 clean:
 	rm -f TestBuffer
