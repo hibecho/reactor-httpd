@@ -97,6 +97,7 @@ public:
     // 可能抛出分配或长度异常；调用后应重新获取读写指针。
     void Write(const void *data, std::size_t length);
 
+    // 将字符串写入到缓冲区
     void WriteString(const std::string &str) { Write(str.c_str(), str.size()); }
 
     // 追加 other 的全部未读数据，不消费源数据；允许自身追加。
