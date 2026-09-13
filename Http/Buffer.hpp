@@ -30,6 +30,7 @@
  *  - 获取当前可读空间的大小
  *  - 写入数据
  *  - 读取数据
+ *  - 查找换行字符
  *  - 清理缓冲区功能
  */
 
@@ -121,7 +122,43 @@ public:
 
     // 读取 length 字节，保留内嵌空字符；length 为 0 时返回空字符串。
     // 超过可读长度时抛出 std::out_of_range；字符串构造失败时抛出异常。
-    std::string PeekAsString(std::size_t length);
+    std::string PeekAsString(std::size_t length) const;
+
+    // 在可读数据中查找第一个 CRLF（"\r\n"）。
+    // 找到时返回指向 '\r' 的指针，未找到返回 nullptr；不消费数据，不改变偏移。
+    // 可读长度小于 2 或没有完整 CRLF 时返回 nullptr，而不是错误。
+    // 末尾孤立的 '\r' 需等待后续数据，但不影响查找此前已有的完整 CRLF。
+    // 返回指针指向缓冲区内部存储，任何可能扩容或搬移的操作
+    // （Write/EnsureWritableSize）之后即失效，应尽快使用。
+    const char *FindCRLF() const noexcept;
+
+    // 返回包含结尾 CRLF 在内的一整行，并不消费该行；
+    // 缓冲区中没有完整 CRLF 时，返回空字符串且不消费任何数据。
+    // 注意：
+    // 真正的空行返回 "\r\n"，因此空字符串唯一表示"尚未收到完整行"。
+    // 字符串构造失败时抛出异常且不消费数据。
+    std::string PeekLine() const
+    {
+        const char *pos = FindCRLF();
+        if (pos == nullptr)
+        {
+            return {};
+        }
+        const std::size_t length = static_cast<std::size_t>(pos - GetReadPosition()) + 2;
+        return PeekAsString(length);
+    }
+
+    // 返回包含结尾 CRLF 在内的一整行，并消费该行。
+    // 缓冲区中没有完整 CRLF 时返回空字符串且不消费任何数据。
+    // 空字符串唯一表示“尚未收到完整行”，真正的空行返回 "\r\n"。
+    // 字符串构造失败时抛出异常且不消费数据。
+    std::string ReadLine()
+    {
+        std::string line = PeekLine();
+        // PeekLine 的返回长度即待消费字节数：未找到时为空串，消费 0 字节。
+        MoveReadOffset(line.size());
+        return line;
+    }
 
     // 丢弃全部数据并将偏移归零；保留存储空间，不擦除内存内容。
     void Clear() noexcept

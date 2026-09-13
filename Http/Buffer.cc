@@ -102,11 +102,11 @@ void Buffer::Peek(void *destination, std::size_t length) const
     std::memcpy(destination, GetReadPosition(), length);
 }
 
-std::string Buffer::PeekAsString(std::size_t length)
+std::string Buffer::PeekAsString(std::size_t length) const
 {
     if (length > GetReadableSize())
     {
-        throw std::out_of_range("Buffer::ReadAsString: length out of bounds");
+        throw std::out_of_range("Buffer::PeekAsString: length out of bounds");
     }
 
     if (length == 0)
@@ -115,4 +115,32 @@ std::string Buffer::PeekAsString(std::size_t length)
     }
     std::string result(GetReadPosition(), length); // 复制为字符串
     return result;
+}
+
+const char *Buffer::FindCRLF() const noexcept
+{
+    const std::size_t readable = GetReadableSize();
+    if (readable < 2)
+    {
+        return nullptr;
+    }
+
+    const char *begin = GetReadPosition();
+    const char *end = begin + readable;
+    const char *p = begin;
+    while (p < end)
+    {
+        p = static_cast<const char *>(std::memchr(p, '\r', static_cast<std::size_t>(end - p)));
+        if (p == nullptr)
+        {
+            return nullptr;
+        }
+        // p + 1 < end 保证 p[1] 合法：末尾孤立的 '\r' 视为未找到。
+        if (p + 1 < end && p[1] == '\n')
+        {
+            return p;
+        }
+        ++p;
+    }
+    return nullptr;
 }
