@@ -1,5 +1,13 @@
-#pragma once
+/**
+ * @file Logger.hpp
+ * @brief
+ *
+ *
+ *
+ *
+ */
 
+#pragma once
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -42,15 +50,17 @@ public:
     //  默认控制台 info；可重复初始化，失败保留原日志器。
     //  非法配置抛 invalid_argument，文件打开失败抛 spdlog_ex。
     void Init(const Config &config);
+
     // 3.设置Level等级
     void SetLevel(Level level); // 关闭时无操作。
+
     // 4.获取Level等级
     Level GetLevel(); // 关闭时返回 off。
+
     // 5.判断是否需要输出日志
     bool ShouldLog(Level level);
 
-    // 6.刷新
-    //  刷新输出缓冲，返回后仍可继续写日志；不等于 fsync。
+    // 6.刷新输出缓冲，返回后仍可继续写日志；不等于 fsync。
     void Flush();
 
     // 7.刷新并关闭，直到 Init 前保持静默；建议工作线程退出后调用。
