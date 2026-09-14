@@ -7,7 +7,7 @@
 #include <utility>
 #include <spdlog/spdlog.h>
 
-// 默认同步，可选异步；配置、写入、刷新与关闭可并发调用。
+// 同步日志模块：配置、写入、刷新与关闭可并发调用。
 class Logger
 {
 public:
@@ -23,20 +23,9 @@ public:
         Off
     };
 
-    // Block:队列满时等待，不因队列满而丢日志。
-    // OverrunOldest:队列满时，覆盖最旧的待处理日志。
-    enum class OverflowPolicy
-    {
-        Block,        // 队列满时等待，不因队列满而丢日志。
-        OverrunOldest // 队列满时，覆盖最旧的待处理日志。
-    };
-
     // 配置项
     struct Config
     {
-        bool async = false;            // 默认同步；启用后使用独立的单后台线程。
-        std::size_t queue_size = 8192; // 异步队列容量，必须大于零。
-        OverflowPolicy overflow_policy = OverflowPolicy::Block;
         bool console = true;                         // 是否向控制台输出日志
         std::string file_path;                       // 空字符串禁用文件输出。
         std::size_t max_file_size = 5 * 1024 * 1024; // 单个日志文件的滚动阈值，单位为字节，即 5 MiB
@@ -61,8 +50,7 @@ public:
     bool ShouldLog(Level level);
 
     // 6.刷新
-    //  等待此前入队的日志处理完成并刷新；两种模式均阻塞，不等于 fsync。
-    //  OverrunOldest 已覆盖的消息无法恢复。
+    //  刷新输出缓冲，返回后仍可继续写日志；不等于 fsync。
     void Flush();
 
     // 7.刷新并关闭，直到 Init 前保持静默；建议工作线程退出后调用。
@@ -90,13 +78,9 @@ public:
 private:
     Logger();
     ~Logger();
-    struct AsyncState;
-    void FlushLocked(); // 调用方持有 _mutex。
     static spdlog::level::level_enum ToSpdlogLevel(Level level);
     static Level FromSpdlogLevel(spdlog::level::level_enum level);
     std::mutex _mutex;
-    // 声明顺序日志器先释放，再销毁线程池。
-    std::unique_ptr<AsyncState> _async;
     std::shared_ptr<spdlog::logger> _logger;
 };
 
