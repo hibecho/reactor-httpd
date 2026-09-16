@@ -18,37 +18,24 @@
  *   -需要处理的事件: 可读、可写、挂断、错误、任意
  *   -事件处理的回调函数
  *
+ * 声明与实现分离，实现见 src/Channel.cc
  */
 
 #pragma once
-#include <sys/epoll.h>
-
+#include <cstdint>
 #include <functional>
-#include <memory>
 
-#include "Epoller.hpp"
-#include "Logger.hpp"
-
-class Epoller; // 前向声明
+class EventLoop; // 前向声明：Channel 只持有其指针并转发事件登记
 
 class Channel
 {
     using EventCallback = std::function<void()>;
 
   public:
-    Channel(int fd, Epoller &epoller)
-        : _fd(fd)
-        , _events(0)
-        , _rvents(0)
-        , _ep(epoller)
-    {
-    }
+    Channel(int fd, EventLoop *loop);
 
     // 析构时自动注销，避免 Epoller 的映射里残留悬垂指针
-    ~Channel()
-    {
-        _ep.Detach(this);
-    }
+    ~Channel();
 
     // 持有登记这一独占关系，禁止拷贝：
     // 否则拷贝对象析构时会注销掉原对象在 Epoller 中的登记
@@ -56,117 +43,54 @@ class Channel
     Channel &operator=(const Channel &) = delete;
 
     // 判断是否监控了可读
-    bool Readable()
-    {
-        return _events & EPOLLIN;
-    }
+    bool Readable();
+
     // 判断是否监控了可写
-    bool Writeable()
-    {
-        return _events & EPOLLOUT;
-    }
+    bool Writeable();
+
     // 启动读事件监控
-    void EnableRead()
-    {
-        _events |= EPOLLIN;
-        Update();
-    }
+    void EnableRead();
+
     // 启动写事件监控
-    void EnableWrite()
-    {
-        _events |= EPOLLOUT;
-        Update();
-    }
+    void EnableWrite();
+
     // 关闭读事件监控
-    void DisableRead()
-    {
-        _events &= ~EPOLLIN;
-        Update();
-    }
+    void DisableRead();
+
     // 关闭写事件监控
-    void DisableWrite()
-    {
-        _events &= ~EPOLLOUT;
-        Update();
-    }
+    void DisableWrite();
+
     // 关闭所有事件监控
-    void DisableAll()
-    {
-        _events = 0;
-        Update();
-    }
+    void DisableAll();
 
     // 更新事件的监控
-    void Update()
-    {
-        _ep.UpdateEvent(this);
-    }
+    void Update();
+
     // 移除事件的监控
-    void Remove()
-    {
-        _ep.DeleteEvent(this);
-    }
+    void Remove();
+
     // 获取管理事件的文件描述符
-    int Getfd() const
-    {
-        return _fd;
-    }
+    int Getfd() const;
+
     // 设置已就绪事件
-    void SetREvents(uint32_t revents)
-    {
-        _rvents = revents;
-    }
+    void SetREvents(uint32_t revents);
+
     // 获取事件
-    uint32_t GetEvents()
-    {
-        return _events;
-    }
+    uint32_t GetEvents();
 
-    void SetReadCallback(const EventCallback &cb)
-    {
-        _read_callback = cb;
-    }
-    void SetWriteCallback(const EventCallback &cb)
-    {
-        _write_callback = cb;
-    }
-    void SetErrorCallback(const EventCallback &cb)
-    {
-        _error_callback = cb;
-    }
-    void SetCloseCallback(const EventCallback &cb)
-    {
-        _close_callback = cb;
-    }
-    void SetEventCallback(const EventCallback &cb)
-    {
-        _event_callback = cb;
-    }
+    void SetReadCallback(const EventCallback &cb);
+    void SetWriteCallback(const EventCallback &cb);
+    void SetErrorCallback(const EventCallback &cb);
+    void SetCloseCallback(const EventCallback &cb);
+    void SetEventCallback(const EventCallback &cb);
 
-    void Handle()
-    {
-        const auto ready = _rvents;
-        if ((ready & EPOLLIN) && _read_callback)
-            _read_callback();
-
-        if ((ready & EPOLLOUT) && _write_callback)
-            _write_callback();
-
-        if ((ready & EPOLLERR) && _error_callback)
-            _error_callback();
-
-        if ((ready & EPOLLHUP) && _close_callback)
-            _close_callback();
-
-        if (ready != 0 && _event_callback)
-            _event_callback();
-    }
+    void Handle();
 
   private:
     int _fd;
     uint32_t _events;
     uint32_t _rvents;
-    Epoller &_ep;                  // 非拥有引用，Epoller 必须比 Channel 活得更久
+    EventLoop *_loop;              // 非拥有，_loop 必须比 Channel 活得更久
     EventCallback _read_callback;  // 可读事件触发的回调
     EventCallback _write_callback; // 可写事件触发的回调
     EventCallback _error_callback; // 错误事件触发的回调

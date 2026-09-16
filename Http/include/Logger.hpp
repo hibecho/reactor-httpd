@@ -8,11 +8,10 @@
  */
 
 #pragma once
-#include <spdlog/spdlog.h>
-
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <utility>
 

@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <sys/epoll.h>
-
 #include <array>
 #include <cstddef>
+#include <sys/epoll.h>
 #include <unordered_map>
 #include <vector>
 
@@ -56,7 +55,7 @@ class Epoller
     // 修改已登记对象的监听；失败时保留映射
     void ModifyEvent(Channel *channel);
     // 移除事件的监控；描述符已被 close 时内核已摘除登记，此时一并清理映射
-    void DeleteEvent(Channel *channel);
+    void RemoveEvent(Channel *channel);
     // 幂等注销：未登记或对象身份不符时静默返回，内核注销失败也清理映射。
     // 不抛异常，供 Channel 析构调用。
     void Detach(Channel *channel) noexcept;

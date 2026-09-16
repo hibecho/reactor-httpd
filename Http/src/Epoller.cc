@@ -1,5 +1,6 @@
 #include "Epoller.hpp"
 #include "Channel.hpp"
+#include "Logger.hpp"
 #include <cerrno>
 #include <stdexcept>
 #include <string>
@@ -91,7 +92,7 @@ void Epoller::UpdateEvent(Channel *channel)
     ModifyEvent(channel);
 }
 
-void Epoller::DeleteEvent(Channel *channel)
+void Epoller::RemoveEvent(Channel *channel)
 {
     RequireRegistered(channel);
 
@@ -112,25 +113,6 @@ void Epoller::DeleteEvent(Channel *channel)
     _channels.erase(channel->Getfd());
 }
 
-// 供 Channel 析构调用：失败不能抛出，也不能残留映射
-void Epoller::Detach(Channel *channel) noexcept
-{
-    if (channel == nullptr)
-        return;
-
-    const int fd = channel->Getfd();
-    auto it = _channels.find(fd);
-
-    // 身份校验：同一 fd 可能被另一个 Channel 登记，此时不能替他注销
-    if (it == _channels.end() || it->second != channel)
-        return;
-
-    // 内核注销可能因 fd 已被外部 close 而返回 EBADF，此时仍需清理映射
-    epoll_event ev{};
-    epoll_ctl(_epfd, EPOLL_CTL_DEL, fd, &ev);
-    _channels.erase(it);
-}
-
 void Epoller::WaitEvent(std::vector<Channel *> &active)
 {
     // 本次调用覆盖上次结果；clear 不会缩减 capacity
@@ -147,7 +129,7 @@ void Epoller::WaitEvent(std::vector<Channel *> &active)
         // 被信号打断，交回外层事件循环决定是否继续等待
         if (error == EINTR)
             return;
-
+        LOG_ERROR("epoll_wait failed");
         throw std::system_error(error, std::generic_category(), "epoll_wait failed");
     }
 
@@ -159,7 +141,7 @@ void Epoller::WaitEvent(std::vector<Channel *> &active)
         auto it = _channels.find(rfd);
         if (it == _channels.end())
         {
-            LOG_ERROR("");
+            LOG_ERROR("Epoller::WaitEvent: Channel not found, fd={}", std::to_string(rfd));
             throw std::logic_error("Epoller::WaitEvent: Channel not found, fd=" + std::to_string(rfd));
         }
         Channel *channel = it->second;

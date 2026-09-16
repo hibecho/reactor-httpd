@@ -1,5 +1,4 @@
 #include "Buffer.hpp"
-
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
