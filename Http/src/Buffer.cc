@@ -11,9 +11,9 @@ Buffer::Buffer(std::size_t initial_size)
 }
 
 Buffer::Buffer(Buffer &&other) noexcept
-    : _buffer(std::move(other._buffer)),
-      _read_index(other._read_index),
-      _write_index(other._write_index)
+    : _buffer(std::move(other._buffer))
+    , _read_index(other._read_index)
+    , _write_index(other._write_index)
 {
     other._buffer.clear();
     other.Clear();

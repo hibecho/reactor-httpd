@@ -1,9 +1,9 @@
 #include "Logger.hpp"
 
-#include <stdexcept>
-#include <vector>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <stdexcept>
+#include <vector>
 
 spdlog::level::level_enum Logger::ToSpdlogLevel(Level level)
 {
@@ -85,8 +85,7 @@ void Logger::Init(const Config &config)
         throw std::invalid_argument("Logger: at least one output is required");
 
     // 设置了文件输出日志，判断合法的文件大小，文件个数
-    if (!config.file_path.empty() &&
-        (config.max_file_size == 0 || config.max_files == 0 || config.max_files > 200000))
+    if (!config.file_path.empty() && (config.max_file_size == 0 || config.max_files == 0 || config.max_files > 200000))
         throw std::invalid_argument("Logger: invalid rotation size or backup count");
 
     {
@@ -128,8 +127,7 @@ Logger::Level Logger::GetLevel()
 bool Logger::ShouldLog(Level level)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return _logger && level >= Level::Trace && level < Level::Off &&
-           _logger->should_log(ToSpdlogLevel(level));
+    return _logger && level >= Level::Trace && level < Level::Off && _logger->should_log(ToSpdlogLevel(level));
 }
 
 void Logger::Flush()

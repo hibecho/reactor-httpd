@@ -19,30 +19,44 @@
  */
 
 #pragma once
-#include <cerrno>
-#include <string>
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
+#include <string>
+
 #include "Logger.hpp"
 #define MAX_LISTEN_SIZE 1024
 
 class Socket
 {
-public:
-    Socket() : _sockfd(-1) {}
+  public:
+    Socket()
+        : _sockfd(-1)
+    {
+    }
+
     // 接管 fd 的所有权，调用者不应再关闭它。
-    explicit Socket(int fd) : _sockfd(fd) {}
+    explicit Socket(int fd)
+        : _sockfd(fd)
+    {
+    }
+
     Socket(const Socket &) = delete;
+
     Socket &operator=(const Socket &) = delete;
-    Socket(Socket &&other) noexcept : _sockfd(other._sockfd)
+
+    Socket(Socket &&other) noexcept
+        : _sockfd(other._sockfd)
     {
         other._sockfd = -1;
     }
+
     Socket &operator=(Socket &&other) noexcept
     {
         if (this != &other)
@@ -53,7 +67,10 @@ public:
         }
         return *this;
     }
-    ~Socket() { Close(); }
+    ~Socket()
+    {
+        Close();
+    }
 
     // 创建套接字
     bool Create()
@@ -78,7 +95,8 @@ public:
     // 绑定地址信息
     bool Bind(const std::string &ip_address, uint16_t port)
     {
-        // int bind(int sockfd, const struct sockaddr *socket_address,socklen_t addrlen);
+        // int bind(int sockfd, const struct sockaddr *socket_address,socklen_t
+        // addrlen);
 
         struct sockaddr_in socket_address{};
         socket_address.sin_family = AF_INET;
@@ -310,8 +328,11 @@ public:
     }
 
     // 借用描述符，不转移所有权。
-    int GetFd() const noexcept { return _sockfd; }
+    int GetFd() const noexcept
+    {
+        return _sockfd;
+    }
 
-private:
+  private:
     int _sockfd;
 };

@@ -1,11 +1,11 @@
+#include "Epoller.hpp"
+#include "Channel.hpp"
 #include <cerrno>
 #include <stdexcept>
 #include <string>
 #include <system_error>
 #include <unistd.h>
 #include <vector>
-#include "Epoller.hpp"
-#include "Channel.hpp"
 
 Epoller::Epoller()
 {
@@ -48,10 +48,8 @@ void Epoller::Control(Channel *channel, int op)
     if (epoll_ctl(_epfd, op, fd, &ev) < 0)
     {
         const int error = errno;
-        throw std::system_error(
-            error, std::generic_category(),
-            "epoll_ctl failed, op=" + std::to_string(op) +
-                ", fd=" + std::to_string(fd));
+        throw std::system_error(error, std::generic_category(),
+                                "epoll_ctl failed, op=" + std::to_string(op) + ", fd=" + std::to_string(fd));
     }
 }
 
@@ -96,8 +94,41 @@ void Epoller::UpdateEvent(Channel *channel)
 void Epoller::DeleteEvent(Channel *channel)
 {
     RequireRegistered(channel);
-    Control(channel, EPOLL_CTL_DEL);
+
+    try
+    {
+        Control(channel, EPOLL_CTL_DEL);
+    }
+    catch (const std::system_error &error)
+    {
+        // EBADF 说明描述符已被外部 close，内核在关闭时就会把它从本 epoll 摘除，
+        // 登记其实已经不存在了。映射留着只会让这个 fd 号后续无法再被登记：
+        // 内核会把该号码复用给新描述符，新 Channel 找到残留表项后因身份不符而抛异常。
+        // 其它错误（如 fd 仍有效但不可轮询）保留映射，交由调用方处理。
+        if (error.code().value() != EBADF)
+            throw;
+    }
+
     _channels.erase(channel->Getfd());
+}
+
+// 供 Channel 析构调用：失败不能抛出，也不能残留映射
+void Epoller::Detach(Channel *channel) noexcept
+{
+    if (channel == nullptr)
+        return;
+
+    const int fd = channel->Getfd();
+    auto it = _channels.find(fd);
+
+    // 身份校验：同一 fd 可能被另一个 Channel 登记，此时不能替他注销
+    if (it == _channels.end() || it->second != channel)
+        return;
+
+    // 内核注销可能因 fd 已被外部 close 而返回 EBADF，此时仍需清理映射
+    epoll_event ev{};
+    epoll_ctl(_epfd, EPOLL_CTL_DEL, fd, &ev);
+    _channels.erase(it);
 }
 
 void Epoller::WaitEvent(std::vector<Channel *> &active)
@@ -117,8 +148,7 @@ void Epoller::WaitEvent(std::vector<Channel *> &active)
         if (error == EINTR)
             return;
 
-        throw std::system_error(
-            error, std::generic_category(), "epoll_wait failed");
+        throw std::system_error(error, std::generic_category(), "epoll_wait failed");
     }
 
     for (int i = 0; i < nfds; i++)
@@ -130,9 +160,7 @@ void Epoller::WaitEvent(std::vector<Channel *> &active)
         if (it == _channels.end())
         {
             LOG_ERROR("");
-            throw std::logic_error(
-                "Epoller::WaitEvent: Channel not found, fd=" +
-                std::to_string(rfd));
+            throw std::logic_error("Epoller::WaitEvent: Channel not found, fd=" + std::to_string(rfd));
         }
         Channel *channel = it->second;
         // 将就绪事件设定到chennel中，由channel对象管理已就绪事件

@@ -35,14 +35,14 @@
  */
 
 #pragma once
-#include <string>
 #include <cstddef>
+#include <string>
 #include <vector>
 
 #define BUFFER_DEFAULT_SIZE 1024
 class Buffer
 {
-public:
+  public:
     enum class LineMode
     {
         CRLF, // 以 "\r\n" 结束
@@ -61,27 +61,48 @@ public:
 
     // 安全获取起始位置的指针 -非const对象
     // 扩容会导致迭代器失效，需要再次安全申请
-    char *Begin() { return _buffer.data(); }
+    char *Begin()
+    {
+        return _buffer.data();
+    }
 
     // 安全获取起始位置的指针 -const对象
-    const char *Begin() const noexcept { return _buffer.data(); }
+    const char *Begin() const noexcept
+    {
+        return _buffer.data();
+    }
 
     // 连续可写区域起点，不推进写偏移；最多写 GetWritableSize() 字节。
     // 长度为 0 时不可解引用。
-    char *GetWritePosition() noexcept { return Begin() + _write_index; }
+    char *GetWritePosition() noexcept
+    {
+        return Begin() + _write_index;
+    }
 
     // 连续可读区域起点，不消费数据，不保证以空字符结尾。
     // 最多读 GetReadableSize() 字节；长度为 0 时不可解引用。
-    const char *GetReadPosition() const noexcept { return Begin() + _read_index; }
+    const char *GetReadPosition() const noexcept
+    {
+        return Begin() + _read_index;
+    }
 
     // 前沿可回收空间，即已消费的数据所占空间。
-    std::size_t GetPrependableSize() const noexcept { return _read_index; }
+    std::size_t GetPrependableSize() const noexcept
+    {
+        return _read_index;
+    }
 
     // 后沿连续可写空间，不包含前沿可回收空间。
-    std::size_t GetWritableSize() const noexcept { return _buffer.size() - _write_index; }
+    std::size_t GetWritableSize() const noexcept
+    {
+        return _buffer.size() - _write_index;
+    }
 
     // 当前可读数据的字节数。
-    std::size_t GetReadableSize() const noexcept { return _write_index - _read_index; }
+    std::size_t GetReadableSize() const noexcept
+    {
+        return _write_index - _read_index;
+    }
 
     // 消费 length 字节；全部消费后将读写偏移归零。
     // length > GetReadableSize() 时抛出 std::out_of_range，状态不变。
@@ -104,7 +125,10 @@ public:
     void Write(const void *data, std::size_t length);
 
     // 将字符串写入到缓冲区
-    void WriteString(const std::string &str) { Write(str.c_str(), str.size()); }
+    void WriteString(const std::string &str)
+    {
+        Write(str.c_str(), str.size());
+    }
 
     // 追加 other 的全部未读数据，不消费源数据；允许自身追加。
     void WriteBuffer(const Buffer &other);
@@ -127,7 +151,8 @@ public:
     }
 
     // 读取并消费 length 字节，保留内嵌空字符；length 为 0 时返回空字符串。
-    // 超过可读长度时抛出 std::out_of_range；字符串构造失败时抛出异常且不消费数据。
+    // 超过可读长度时抛出
+    // std::out_of_range；字符串构造失败时抛出异常且不消费数据。
     std::string ReadAsString(std::size_t length)
     {
         std::string result = PeekAsString(length);
@@ -165,8 +190,7 @@ public:
             return {};
         }
         const std::size_t delimiter_size = use_crlf ? 2 : 1;
-        const std::size_t length =
-            static_cast<std::size_t>(pos - GetReadPosition()) + delimiter_size;
+        const std::size_t length = static_cast<std::size_t>(pos - GetReadPosition()) + delimiter_size;
         return PeekAsString(length);
     }
 
@@ -188,7 +212,7 @@ public:
         _write_index = 0;
     }
 
-private:
+  private:
     // 始终满足：0 <= _read_index <= _write_index <= _buffer.size()。
     std::vector<char> _buffer;
     std::size_t _read_index = 0;

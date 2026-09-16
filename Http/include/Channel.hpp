@@ -22,10 +22,12 @@
 
 #pragma once
 #include <sys/epoll.h>
+
 #include <functional>
 #include <memory>
-#include "Logger.hpp"
+
 #include "Epoller.hpp"
+#include "Logger.hpp"
 
 class Epoller; // 前向声明
 
@@ -33,19 +35,36 @@ class Channel
 {
     using EventCallback = std::function<void()>;
 
-public:
+  public:
     Channel(int fd, Epoller &epoller)
-        : _fd(fd),
-          _events(0),
-          _rvents(0),
-          _ep(epoller)
+        : _fd(fd)
+        , _events(0)
+        , _rvents(0)
+        , _ep(epoller)
     {
     }
 
+    // 析构时自动注销，避免 Epoller 的映射里残留悬垂指针
+    ~Channel()
+    {
+        _ep.Detach(this);
+    }
+
+    // 持有登记这一独占关系，禁止拷贝：
+    // 否则拷贝对象析构时会注销掉原对象在 Epoller 中的登记
+    Channel(const Channel &) = delete;
+    Channel &operator=(const Channel &) = delete;
+
     // 判断是否监控了可读
-    bool Readable() { return _events & EPOLLIN; }
+    bool Readable()
+    {
+        return _events & EPOLLIN;
+    }
     // 判断是否监控了可写
-    bool Writeable() { return _events & EPOLLOUT; }
+    bool Writeable()
+    {
+        return _events & EPOLLOUT;
+    }
     // 启动读事件监控
     void EnableRead()
     {
@@ -78,21 +97,51 @@ public:
     }
 
     // 更新事件的监控
-    void Update() { _ep.UpdateEvent(this); }
+    void Update()
+    {
+        _ep.UpdateEvent(this);
+    }
     // 移除事件的监控
-    void Remove() { _ep.DeleteEvent(this); }
+    void Remove()
+    {
+        _ep.DeleteEvent(this);
+    }
     // 获取管理事件的文件描述符
-    int Getfd() const { return _fd; }
+    int Getfd() const
+    {
+        return _fd;
+    }
     // 设置已就绪事件
-    void SetREvents(uint32_t revents) { _rvents = revents; }
+    void SetREvents(uint32_t revents)
+    {
+        _rvents = revents;
+    }
     // 获取事件
-    uint32_t GetEvents() { return _events; }
+    uint32_t GetEvents()
+    {
+        return _events;
+    }
 
-    void SetReadCallback(const EventCallback &cb) { _read_callback = cb; }
-    void SetWriteCallback(const EventCallback &cb) { _write_callback = cb; }
-    void SetErrorCallback(const EventCallback &cb) { _error_callback = cb; }
-    void SetCloseCallback(const EventCallback &cb) { _close_callback = cb; }
-    void SetEventCallback(const EventCallback &cb) { _event_callback = cb; }
+    void SetReadCallback(const EventCallback &cb)
+    {
+        _read_callback = cb;
+    }
+    void SetWriteCallback(const EventCallback &cb)
+    {
+        _write_callback = cb;
+    }
+    void SetErrorCallback(const EventCallback &cb)
+    {
+        _error_callback = cb;
+    }
+    void SetCloseCallback(const EventCallback &cb)
+    {
+        _close_callback = cb;
+    }
+    void SetEventCallback(const EventCallback &cb)
+    {
+        _event_callback = cb;
+    }
 
     void Handle()
     {
@@ -113,7 +162,7 @@ public:
             _event_callback();
     }
 
-private:
+  private:
     int _fd;
     uint32_t _events;
     uint32_t _rvents;

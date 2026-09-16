@@ -21,24 +21,26 @@
 #pragma once
 
 #include <sys/epoll.h>
+
 #include <array>
+#include <cstddef>
 #include <unordered_map>
 #include <vector>
-#include "Channel.hpp"
 
+class Channel;
 class Epoller
 {
     // 1024 是一次获取事件的数量上限，不是最多监听 1024 个连接
-    static constexpr size_t MAX_EVENTS_PER_WAIT = 1024;
+    static constexpr std::size_t MAX_EVENTS_PER_WAIT = 1024;
 
-private:
+  private:
     // 检查非空参数及已登记对象的身份
     void RequireRegistered(Channel *channel) const;
 
     // 对epoll_ctl的直接操作
     void Control(Channel *channel, int op);
 
-public:
+  public:
     Epoller();
 
     // 释放持有的 epoll 句柄
@@ -53,17 +55,20 @@ public:
     void AddEvent(Channel *channel);
     // 修改已登记对象的监听；失败时保留映射
     void ModifyEvent(Channel *channel);
-    // 移除事件的监控
+    // 移除事件的监控；描述符已被 close 时内核已摘除登记，此时一并清理映射
     void DeleteEvent(Channel *channel);
+    // 幂等注销：未登记或对象身份不符时静默返回，内核注销失败也清理映射。
+    // 不抛异常，供 Channel 析构调用。
+    void Detach(Channel *channel) noexcept;
     // 事件存在则更新，不存在则创建
     void UpdateEvent(Channel *channel);
     // 获取已就绪描述符的Channel对象
     void WaitEvent(std::vector<Channel *> &active);
 
-private:
+  private:
     int _epfd;
     std::array<struct epoll_event, MAX_EVENTS_PER_WAIT> _events{};
-    // 非拥有指针：Channel 销毁前必须注销监听并移除映射
-    // Epoller 删除映射时，只需要 erase，不能 delete 这个指针
+    // 非拥有指针：Epoller 删除映射时只需要 erase，不能 delete 这个指针。
+    // 显式 DeleteEvent 与 Channel 析构触发的 Detach 共同保证不残留悬垂指针
     std::unordered_map<int, Channel *> _channels;
 };
