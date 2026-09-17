@@ -49,6 +49,7 @@ void Epoller::Control(Channel *channel, int op)
     if (epoll_ctl(_epfd, op, fd, &ev) < 0)
     {
         const int error = errno;
+        LOG_ERROR("epoll_ctl failed, op={}", std::to_string(op), ", fd={}", std::to_string(fd));
         throw std::system_error(error, std::generic_category(),
                                 "epoll_ctl failed, op=" + std::to_string(op) + ", fd=" + std::to_string(fd));
     }
@@ -83,13 +84,17 @@ void Epoller::ModifyEvent(Channel *channel)
 
 void Epoller::UpdateEvent(Channel *channel)
 {
+    if (channel == nullptr)
+        return;
     auto it = _channels.find(channel->Getfd());
     if (it == _channels.end())
     {
         AddEvent(channel);
-        return;
     }
-    ModifyEvent(channel);
+    else
+    {
+        ModifyEvent(channel);
+    }
 }
 
 void Epoller::RemoveEvent(Channel *channel)

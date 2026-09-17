@@ -23,14 +23,21 @@
 EventLoop::EventLoop()
     : _thread_id(std::this_thread::get_id())
     , _event_fd(CreateEventfd())
-    , _event_channel(std::unique_ptr<Channel>(new Channel(_event_fd, this)))
-    , _ep(std::unique_ptr<Epoller>())
+    , _event_channel(std::make_unique<Channel>(_event_fd, this))
+    , _ep(std::make_unique<Epoller>())
+    , _tw(std::make_unique<TimerWheel>(this))
 {
     // 给_event_channel注册回调方法
-    // 1.设置可读事件
-    // 2.设置读事件回调
-    _event_channel->EnableRead();
+    // 1.设置读事件回调
+    // 2.设置可读事件
     _event_channel->SetReadCallback([this]() { HandleEventfd(); });
+    _event_channel->EnableRead();
+}
+
+EventLoop::~EventLoop()
+{
+    if (close(_event_fd) < 0)
+        LOG_ERROR("Failed to close event fd");
 }
 
 void EventLoop::Loop()
@@ -178,4 +185,17 @@ void EventLoop::HandleEventfd()
         LOG_ERROR("读 eventfd 返回了异常字节数");
         throw std::runtime_error("读 eventfd 返回了异常字节数");
     }
+}
+
+void EventLoop::TimerAdd(uint64_t id, uint32_t timeout, task_t cb)
+{
+    _tw->TimerAdd(id, timeout, cb);
+}
+void EventLoop::TimerRefresh(uint64_t id)
+{
+    _tw->TimerConcel(id);
+}
+void EventLoop::TimerConcel(uint64_t id)
+{
+    _tw->TimerRefresh(id);
 }

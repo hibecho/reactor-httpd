@@ -35,16 +35,13 @@ class Epoller
   private:
     // 检查非空参数及已登记对象的身份
     void RequireRegistered(Channel *channel) const;
-
     // 对epoll_ctl的直接操作
     void Control(Channel *channel, int op);
 
   public:
     Epoller();
-
     // 释放持有的 epoll 句柄
     ~Epoller();
-
     // 拥有 epoll 句柄这一独占资源，禁止拷贝：
     // 拷贝会使两个对象持有同一描述符，析构时重复 close 并释放他人的句柄
     Epoller(const Epoller &) = delete;
@@ -56,9 +53,6 @@ class Epoller
     void ModifyEvent(Channel *channel);
     // 移除事件的监控；描述符已被 close 时内核已摘除登记，此时一并清理映射
     void RemoveEvent(Channel *channel);
-    // 幂等注销：未登记或对象身份不符时静默返回，内核注销失败也清理映射。
-    // 不抛异常，供 Channel 析构调用。
-    void Detach(Channel *channel) noexcept;
     // 事件存在则更新，不存在则创建
     void UpdateEvent(Channel *channel);
     // 获取已就绪描述符的Channel对象

@@ -15,11 +15,6 @@ Channel::Channel(int fd, EventLoop *loop)
 {
 }
 
-// 析构时自动注销，避免 Epoller 的映射里残留悬垂指针
-Channel::~Channel()
-{
-}
-
 bool Channel::Readable()
 {
     return _events & EPOLLIN;
@@ -85,29 +80,29 @@ uint32_t Channel::GetEvents()
     return _events;
 }
 
-void Channel::SetReadCallback(const EventCallback &cb)
+void Channel::SetReadCallback(EventCallback cb)
 {
-    _read_callback = cb;
+    _read_callback = std::move(cb);
 }
 
-void Channel::SetWriteCallback(const EventCallback &cb)
+void Channel::SetWriteCallback(EventCallback cb)
 {
-    _write_callback = cb;
+    _write_callback = std::move(cb);
 }
 
-void Channel::SetErrorCallback(const EventCallback &cb)
+void Channel::SetErrorCallback(EventCallback cb)
 {
-    _error_callback = cb;
+    _error_callback = std::move(cb);
 }
 
-void Channel::SetCloseCallback(const EventCallback &cb)
+void Channel::SetCloseCallback(EventCallback cb)
 {
-    _close_callback = cb;
+    _close_callback = std::move(cb);
 }
 
-void Channel::SetEventCallback(const EventCallback &cb)
+void Channel::SetEventCallback(EventCallback cb)
 {
-    _event_callback = cb;
+    _event_callback = std::move(cb);
 }
 
 void Channel::Handle()

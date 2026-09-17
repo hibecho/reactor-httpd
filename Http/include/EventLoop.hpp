@@ -27,8 +27,6 @@
  *  -互斥锁
  *  -任务队列
  *
- * 接口设计:
- *
  *
  */
 
@@ -38,6 +36,7 @@
 #include "Epoller.hpp"
 #include "Logger.hpp"
 #include "Socket.hpp"
+#include "TimerQueue.hpp"
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -53,28 +52,46 @@ class EventLoop
     EventLoop(const EventLoop &) = delete;
     EventLoop &operator=(const EventLoop &) = delete;
 
-    // 必须由所属线程调用
+    // EventLoop模块的接口
+    //  必须由所属线程调用
     void Loop();
     // 当前就是所属线程：立即执行
     // 其他线程：入队并唤醒
     void RunInLoop(Task task);
     // 来自其他线程，都放入队列，稍后执行
     void QueueInLoop(Task task);
+    // 判断是否为所属线程
     bool IsInLoopThread() const;
-    void UpdateEvent(Channel *channel); // 添加/修改描述符的事件
-    void RemoveEvent(Channel *channel); // 移除描述符的事件
+
+    // Epoller模块的上层接口
+    //  添加/修改描述符的事件
+    void UpdateEvent(Channel *channel);
+    // 移除描述符的事件
+    void RemoveEvent(Channel *channel);
+
+    // TiemrQueue模块的上层接口
+    // 添加定时任务
+    void TimerAdd(uint64_t id, uint32_t timeout, task_t cb);
+    // 刷新定时任务
+    void TimerRefresh(uint64_t id);
+    // 取消定时任务
+    void TimerConcel(uint64_t id);
 
   private:
-    void WeakupEventfd(); // 写 eventfd
-    void HandleEventfd(); // 读 eventfd，消费通知
-    void ExecuteTasks();  // 取出一批任务，解锁后执行
-    int CreateEventfd() const;
+    int CreateEventfd() const; // 创建eventfd
+    void WeakupEventfd();      // 写 eventfd
+    void HandleEventfd();      // 读 eventfd，消费通知
+    void ExecuteTasks();       // 取出一批任务，解锁后执行
 
   private:
+    // EventLoop模块：维护EventLoop的任务队列
     std::thread::id _thread_id;              // 线程id: 判断操作是否发生在所属线程
     int _event_fd;                           // _event_fd: 通知任务队列的文件描述符
     std::unique_ptr<Channel> _event_channel; // _event_channel: 用于管理通知任务队列的文件描述符
-    std::unique_ptr<Epoller> _ep;            // 找出哪些文件描述符已经就绪
     std::queue<Task> _tasks;                 // 任务队列
     std::mutex _mutex;                       // 保证任务队列线程安全的互斥锁
+    // Epoller模块
+    std::unique_ptr<Epoller> _ep; // 找出哪些文件描述符已经就绪
+    // TimerQueue模块
+    std::unique_ptr<TimerWheel> _tw; // 管理定时任务
 };

@@ -34,11 +34,7 @@ class Channel
   public:
     Channel(int fd, EventLoop *loop);
 
-    // 析构时自动注销，避免 Epoller 的映射里残留悬垂指针
-    ~Channel();
-
     // 持有登记这一独占关系，禁止拷贝：
-    // 否则拷贝对象析构时会注销掉原对象在 Epoller 中的登记
     Channel(const Channel &) = delete;
     Channel &operator=(const Channel &) = delete;
 
@@ -78,18 +74,18 @@ class Channel
     // 获取事件
     uint32_t GetEvents();
 
-    void SetReadCallback(const EventCallback &cb);
-    void SetWriteCallback(const EventCallback &cb);
-    void SetErrorCallback(const EventCallback &cb);
-    void SetCloseCallback(const EventCallback &cb);
-    void SetEventCallback(const EventCallback &cb);
+    void SetReadCallback(EventCallback cb);
+    void SetWriteCallback(EventCallback cb);
+    void SetErrorCallback(EventCallback cb);
+    void SetCloseCallback(EventCallback cb);
+    void SetEventCallback(EventCallback cb);
 
     void Handle();
 
   private:
-    int _fd;
-    uint32_t _events;
-    uint32_t _rvents;
+    int _fd;                       // 管理的文件描述符
+    uint32_t _events;              // 设置的事件
+    uint32_t _rvents;              // 激活的事件
     EventLoop *_loop;              // 非拥有，_loop 必须比 Channel 活得更久
     EventCallback _read_callback;  // 可读事件触发的回调
     EventCallback _write_callback; // 可写事件触发的回调
