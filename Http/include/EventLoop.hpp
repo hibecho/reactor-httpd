@@ -27,7 +27,6 @@
  *  -互斥锁
  *  -任务队列
  *
- *
  */
 
 #pragma once
@@ -75,7 +74,7 @@ class EventLoop
     // 刷新定时任务
     void TimerRefresh(uint64_t id);
     // 取消定时任务
-    void TimerConcel(uint64_t id);
+    void TimerCancel(uint64_t id);
 
   private:
     int CreateEventfd() const; // 创建eventfd

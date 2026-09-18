@@ -193,9 +193,9 @@ void EventLoop::TimerAdd(uint64_t id, uint32_t timeout, task_t cb)
 }
 void EventLoop::TimerRefresh(uint64_t id)
 {
-    _tw->TimerConcel(id);
-}
-void EventLoop::TimerConcel(uint64_t id)
-{
     _tw->TimerRefresh(id);
+}
+void EventLoop::TimerCancel(uint64_t id)
+{
+    _tw->TimerCancel(id);
 }

@@ -107,8 +107,8 @@ void Epoller::RemoveEvent(Channel *channel)
     }
     catch (const std::system_error &error)
     {
-        // EBADF 说明描述符已被外部 close，内核在关闭时就会把它从本 epoll 摘除，
-        // 登记其实已经不存在了。映射留着只会让这个 fd 号后续无法再被登记：
+        // EBADF 说明描述符已被外部 close，内核在关闭时就会把它从本 epoll 摘除，登记其实已经不存在了。
+        // 映射留着只会让这个 fd 号后续无法再被登记：
         // 内核会把该号码复用给新描述符，新 Channel 找到残留表项后因身份不符而抛异常。
         // 其它错误（如 fd 仍有效但不可轮询）保留映射，交由调用方处理。
         if (error.code().value() != EBADF)

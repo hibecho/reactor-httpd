@@ -35,29 +35,20 @@ class Socket
 
     // 接管 fd 的所有权，调用者不应再关闭它。
     explicit Socket(int fd);
-
     Socket(const Socket &) = delete;
-
     Socket &operator=(const Socket &) = delete;
-
     Socket(Socket &&other) noexcept;
-
     Socket &operator=(Socket &&other) noexcept;
-
     ~Socket();
 
     // 创建套接字
     bool Create();
-
     // 绑定地址信息
     bool Bind(const std::string &ip_address, uint16_t port);
-
     // 开始监听
     bool Listen(int backlog = MAX_LISTEN_SIZE);
-
     // 客户端向服务器发起连接
     bool Connect(const std::string &ip_address, uint16_t port);
-
     // 兼容旧接口名称。
     bool Connet(const std::string &ip_address, uint16_t port);
 
@@ -72,7 +63,7 @@ class Socket
     // len > 0 时返回 0 表示对端发送方向有序关闭；len == 0 不能用于判断断连。
     // -1 表示失败，errno 为 EAGAIN/EWOULDBLOCK 时应等待可读后再试。
     ssize_t Recv(void *buf, size_t len, int flag = 0);
-
+  
     ssize_t NonBlockRecv(void *buf, size_t len);
 
     // 发送一次数据，返回实际字节数；调用者负责后续发送剩余部分。

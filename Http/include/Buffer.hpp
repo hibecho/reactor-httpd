@@ -51,10 +51,8 @@ class Buffer
 
     // 初始可写空间，单位为字节；允许为 0，初始可读数据为空。
     explicit Buffer(std::size_t initial_size = BUFFER_DEFAULT_SIZE);
-
     Buffer(const Buffer &) = default;
     Buffer &operator=(const Buffer &) = default;
-
     // 转移存储及下标；源对象恢复为空且可复用，自移动赋值保持原状态。
     Buffer(Buffer &&other) noexcept;
     Buffer &operator=(Buffer &&other) noexcept;

@@ -33,7 +33,6 @@ class Channel
 
   public:
     Channel(int fd, EventLoop *loop);
-
     // 持有登记这一独占关系，禁止拷贝：
     Channel(const Channel &) = delete;
     Channel &operator=(const Channel &) = delete;
@@ -43,31 +42,22 @@ class Channel
 
     // 判断是否监控了可写
     bool Writeable();
-
     // 启动读事件监控
     void EnableRead();
-
     // 启动写事件监控
     void EnableWrite();
-
     // 关闭读事件监控
     void DisableRead();
-
     // 关闭写事件监控
     void DisableWrite();
-
     // 关闭所有事件监控
     void DisableAll();
-
     // 更新事件的监控
     void Update();
-
     // 移除事件的监控
     void Remove();
-
     // 获取管理事件的文件描述符
     int Getfd() const;
-
     // 设置已就绪事件
     void SetREvents(uint32_t revents);
 

@@ -59,7 +59,9 @@ class Epoller
     void WaitEvent(std::vector<Channel *> &active);
 
   private:
+    // epoll的文件描述符
     int _epfd;
+    // 从就绪队列中提取就绪时间
     std::array<struct epoll_event, MAX_EVENTS_PER_WAIT> _events{};
     // 非拥有指针：Epoller 删除映射时只需要 erase，不能 delete 这个指针。
     // 显式 DeleteEvent 与 Channel 析构触发的 Detach 共同保证不残留悬垂指针
