@@ -49,6 +49,7 @@ class Buffer
         LF    // 以 '\n' 结束
     };
 
+    /*Buffer类的构造函数*/
     // 初始可写空间，单位为字节；允许为 0，初始可读数据为空。
     explicit Buffer(std::size_t initial_size = BUFFER_DEFAULT_SIZE);
     Buffer(const Buffer &) = default;
@@ -59,48 +60,27 @@ class Buffer
 
     // 安全获取起始位置的指针 -非const对象
     // 扩容会导致迭代器失效，需要再次安全申请
-    char *Begin()
-    {
-        return _buffer.data();
-    }
+    char *Begin();
 
     // 安全获取起始位置的指针 -const对象
-    const char *Begin() const noexcept
-    {
-        return _buffer.data();
-    }
+    const char *Begin() const noexcept;
 
     // 连续可写区域起点，不推进写偏移；最多写 GetWritableSize() 字节。
     // 长度为 0 时不可解引用。
-    char *GetWritePosition() noexcept
-    {
-        return Begin() + _write_index;
-    }
+    char *GetWritePosition() noexcept;
 
     // 连续可读区域起点，不消费数据，不保证以空字符结尾。
     // 最多读 GetReadableSize() 字节；长度为 0 时不可解引用。
-    const char *GetReadPosition() const noexcept
-    {
-        return Begin() + _read_index;
-    }
+    const char *GetReadPosition() const noexcept;
 
     // 前沿可回收空间，即已消费的数据所占空间。
-    std::size_t GetPrependableSize() const noexcept
-    {
-        return _read_index;
-    }
+    std::size_t GetPrependableSize() const noexcept;
 
     // 后沿连续可写空间，不包含前沿可回收空间。
-    std::size_t GetWritableSize() const noexcept
-    {
-        return _buffer.size() - _write_index;
-    }
+    std::size_t GetWritableSize() const noexcept;
 
     // 当前可读数据的字节数。
-    std::size_t GetReadableSize() const noexcept
-    {
-        return _write_index - _read_index;
-    }
+    std::size_t GetReadableSize() const noexcept;
 
     // 消费 length 字节；全部消费后将读写偏移归零。
     // length > GetReadableSize() 时抛出 std::out_of_range，状态不变。
@@ -123,10 +103,7 @@ class Buffer
     void Write(const void *data, std::size_t length);
 
     // 将字符串写入到缓冲区
-    void WriteString(const std::string &str)
-    {
-        Write(str.c_str(), str.size());
-    }
+    void WriteString(const std::string &str);
 
     // 追加 other 的全部未读数据，不消费源数据；允许自身追加。
     void WriteBuffer(const Buffer &other);
@@ -134,7 +111,7 @@ class Buffer
     // 查看 length 字节，不消费数据，不进行推进读偏移。
     // destination 必须有足够的可写空间，且不得与缓冲区存储重叠。
     void Peek(void *destination, std::size_t length) const;
-
+    
     // 将 length 字节可读数据复制到 destination，然后推进读偏移。
     // 全部消费后将读写偏移归零，不自动添加字符串结束符。
     // length > GetReadableSize() 时抛出 std::out_of_range，
@@ -142,21 +119,12 @@ class Buffer
     // length 为 0 时不做任何操作，允许 destination 为 nullptr。
     // length 非 0 时，destination 必须指向至少 length 字节的有效可写内存，
     // 且不得与本缓冲区的底层存储重叠。
-    void Read(void *destination, std::size_t length)
-    {
-        Peek(destination, length);
-        MoveReadOffset(length);
-    }
+    void Read(void *destination, std::size_t length);
 
     // 读取并消费 length 字节，保留内嵌空字符；length 为 0 时返回空字符串。
     // 超过可读长度时抛出
     // std::out_of_range；字符串构造失败时抛出异常且不消费数据。
-    std::string ReadAsString(std::size_t length)
-    {
-        std::string result = PeekAsString(length);
-        MoveReadOffset(length);
-        return result;
-    }
+    std::string ReadAsString(std::size_t length);
 
     // 读取 length 字节，保留内嵌空字符；length 为 0 时返回空字符串。
     // 超过可读长度时抛出 std::out_of_range；字符串构造失败时抛出异常。
@@ -179,36 +147,15 @@ class Buffer
     // 没有完整行时返回空字符串；空行返回对应结束符，二者可区分。
     // LF 模式仅按 '\n' 分界，不删除前面的 '\r'。
     // 字符串构造失败时抛出异常且不消费数据。
-    std::string PeekLine(LineMode mode = LineMode::CRLF) const
-    {
-        const bool use_crlf = (mode == LineMode::CRLF);
-        const char *pos = use_crlf ? FindCRLF() : FindLF();
-        if (pos == nullptr)
-        {
-            return {};
-        }
-        const std::size_t delimiter_size = use_crlf ? 2 : 1;
-        const std::size_t length = static_cast<std::size_t>(pos - GetReadPosition()) + delimiter_size;
-        return PeekAsString(length);
-    }
+    std::string PeekLine(LineMode mode = LineMode::CRLF) const;
 
     // 按指定模式读取并消费整行，包含结束符；默认使用 CRLF。
     // 未收到完整行时返回空字符串且不消费，LF 模式不删除回车。
     // 字符串构造失败时抛出异常且不消费数据。
-    std::string ReadLine(LineMode mode = LineMode::CRLF)
-    {
-        std::string line = PeekLine(mode);
-        // PeekLine 的返回长度即待消费字节数：未找到时为空串，消费 0 字节。
-        MoveReadOffset(line.size());
-        return line;
-    }
+    std::string ReadLine(LineMode mode = LineMode::CRLF);
 
     // 丢弃全部数据并将偏移归零；保留存储空间，不擦除内存内容。
-    void Clear() noexcept
-    {
-        _read_index = 0;
-        _write_index = 0;
-    }
+    void Clear() noexcept;
 
   private:
     // 始终满足：0 <= _read_index <= _write_index <= _buffer.size()。

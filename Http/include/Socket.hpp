@@ -31,8 +31,8 @@
 class Socket
 {
   public:
+    /*Socket构造函数*/
     Socket();
-
     // 接管 fd 的所有权，调用者不应再关闭它。
     explicit Socket(int fd);
     Socket(const Socket &) = delete;
@@ -63,7 +63,8 @@ class Socket
     // len > 0 时返回 0 表示对端发送方向有序关闭；len == 0 不能用于判断断连。
     // -1 表示失败，errno 为 EAGAIN/EWOULDBLOCK 时应等待可读后再试。
     ssize_t Recv(void *buf, size_t len, int flag = 0);
-  
+
+    // 非阻塞接收
     ssize_t NonBlockRecv(void *buf, size_t len);
 
     // 发送一次数据，返回实际字节数；调用者负责后续发送剩余部分。
@@ -71,6 +72,7 @@ class Socket
     // 抑制本次调用的 SIGPIPE，发送失败通过返回值和 errno 报告。
     ssize_t Send(const void *buf, size_t len, int flag = 0);
 
+    // 非阻塞发送
     ssize_t NonBlockSend(const void *buf, size_t len);
 
     // 关闭后可重复调用；保留调用前 errno，不对 close 的 EINTR 重试。

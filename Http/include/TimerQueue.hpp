@@ -34,14 +34,11 @@ class TimerTask
 {
   public:
     TimerTask(uint64_t id, uint32_t timeout, const task_t &cb);
+    ~TimerTask();
 
     void SetRelease(ReleaseFunc release);
-
     uint32_t GetTimeout();
-
     void Cancel();
-
-    ~TimerTask();
 
   private:
     uint64_t _id;         // 定时器任务的对象ID
@@ -57,31 +54,26 @@ class TimerWheel
     using PtrTask = std::shared_ptr<TimerTask>;
 
   public:
+    /*TimerWheel构造函数*/
     TimerWheel(EventLoop *loop);
     ~TimerWheel();
-
-    // 持有 timerfd 的独占登记关系，禁止拷贝
     TimerWheel(const TimerWheel &) = delete;
     TimerWheel &operator=(const TimerWheel &) = delete;
 
     void TimerAdd(uint64_t id, uint32_t timeout, task_t cb);
     void TimerAddInLoop(uint64_t id, uint32_t timeout, task_t cb);
-
     void TimerRefresh(uint64_t id);
     void TimerRefreshInLoop(uint64_t id);
-
     void TimerCancel(uint64_t id);
     void TimerCancelInLoop(uint64_t id);
-
-    void Tick(); // 每秒执行一次
+    void Tick();
 
   private:
     // 仅当 _timers 中该 id 仍然指向 self 时移除记录，
     // 避免旧任务析构时错删被同 id 新任务接管的登记
     void RemoveTimerIfOwned(uint64_t id, const WeakTask &self);
-
+    // 创建Timerfd文件描述符
     int CreateTimerfd();
-
     // 读 timerfd，返回本次读到的到期次数（调用方据此推进同等数量的 tick）
     uint64_t ReadTimerfd();
 

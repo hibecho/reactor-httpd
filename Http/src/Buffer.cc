@@ -191,3 +191,83 @@ const char *Buffer::FindLF() const noexcept
     }
     return static_cast<const char *>(std::memchr(GetReadPosition(), '\n', readable));
 }
+
+char *Buffer::Begin()
+{
+    return _buffer.data();
+}
+
+const char *Buffer::Begin() const noexcept
+{
+    return _buffer.data();
+}
+
+char *Buffer::GetWritePosition() noexcept
+{
+    return Begin() + _write_index;
+}
+
+const char *Buffer::GetReadPosition() const noexcept
+{
+    return Begin() + _read_index;
+}
+
+std::size_t Buffer::GetPrependableSize() const noexcept
+{
+    return _read_index;
+}
+
+std::size_t Buffer::GetWritableSize() const noexcept
+{
+    return _buffer.size() - _write_index;
+}
+
+std::size_t Buffer::GetReadableSize() const noexcept
+{
+    return _write_index - _read_index;
+}
+
+void Buffer::WriteString(const std::string &str)
+{
+    Write(str.c_str(), str.size());
+}
+
+void Buffer::Read(void *destination, std::size_t length)
+{
+    Peek(destination, length);
+    MoveReadOffset(length);
+}
+
+std::string Buffer::ReadAsString(std::size_t length)
+{
+    std::string result = PeekAsString(length);
+    MoveReadOffset(length);
+    return result;
+}
+
+std::string Buffer::PeekLine(LineMode mode) const
+{
+    const bool use_crlf = (mode == LineMode::CRLF);
+    const char *pos = use_crlf ? FindCRLF() : FindLF();
+    if (pos == nullptr)
+    {
+        return {};
+    }
+    const std::size_t delimiter_size = use_crlf ? 2 : 1;
+    const std::size_t length = static_cast<std::size_t>(pos - GetReadPosition()) + delimiter_size;
+    return PeekAsString(length);
+}
+
+std::string Buffer::ReadLine(LineMode mode)
+{
+    std::string line = PeekLine(mode);
+    // PeekLine 的返回长度即待消费字节数：未找到时为空串，消费 0 字节。
+    MoveReadOffset(line.size());
+    return line;
+}
+
+void Buffer::Clear() noexcept
+{
+    _read_index = 0;
+    _write_index = 0;
+}

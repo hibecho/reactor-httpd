@@ -163,25 +163,29 @@ int Socket::Accept(sockaddr *peer_address, socklen_t *peer_address_length)
     }
 }
 
-ssize_t Socket::Recv(void *buf, size_t len, int flag)
+ssize_t Socket::Recv(void *buffer, size_t length, int flags)
 {
     while (true)
     {
-        ssize_t n = recv(_sockfd, buf, len, flag);
-        if (n >= 0)
+        const ssize_t received = recv(_sockfd, buffer, length, flags);
+        if (received >= 0)
         {
-            return n;
+            return received;
         }
-        const int saved_errno = errno;
-        if (saved_errno == EINTR)
+        const int error = errno;
+        if (error == EINTR)
         {
             continue;
         }
-        if (saved_errno != EAGAIN && saved_errno != EWOULDBLOCK)
+
+        if (error != EAGAIN && error != EWOULDBLOCK)
         {
-            LOG_ERROR("Failed to recv: errno={}", saved_errno);
+            LOG_ERROR("Failed to receive data: fd={}, errno={}", _sockfd, error);
         }
-        errno = saved_errno;
+        // 日志内部可能调用其他库函数或系统调用，从而改变 errno，因此返回前需要恢复
+        errno = error;
+        // EAGAIN / EWOULDBLOCK → 不打印错误日志 → 返回 -1
+        // 其他非 EINTR 错误   → 打印错误日志   → 返回 -1
         return -1;
     }
 }
@@ -196,6 +200,7 @@ ssize_t Socket::Send(const void *buf, size_t len, int flag)
     while (true)
     {
         ssize_t n = send(_sockfd, buf, len, flag | MSG_NOSIGNAL);
+        // 返回实际发送字节数
         if (n >= 0)
         {
             return n;
@@ -211,6 +216,8 @@ ssize_t Socket::Send(const void *buf, size_t len, int flag)
             LOG_ERROR("Failed to send: errno={}", saved_errno);
         }
         errno = saved_errno;
+        // EAGAIN / EWOULDBLOCK → 不打印错误日志 → 返回 -1
+        // 其他非 EINTR 错误   → 打印错误日志   → 返回 -1
         return -1;
     }
 }
