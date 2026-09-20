@@ -26,7 +26,8 @@ TimerTask::TimerTask(uint64_t id, uint32_t timeout, const task_t &cb)
     , _timeout(timeout)
     , _task_cb(cb)
     , _canceled(false)
-{}
+{
+}
 
 void TimerTask::SetRelease(ReleaseFunc release)
 {
@@ -133,10 +134,11 @@ void TimerWheel::TimerAddInLoop(uint64_t id, uint32_t timeout, task_t cb)
         // 摘掉旧记录
         _timers.erase(old);
     }
+
     // 添加新任务
     PtrTask pt = std::make_shared<TimerTask>(id, delay, cb);
+
     // 隐式转换：PtrTask-> WeakTask
-    //
     const WeakTask self(pt);
 
     // 移除_timers中观察的指定 ID 任务，但只在记录仍属于 self 时移除
@@ -147,6 +149,7 @@ void TimerWheel::TimerAddInLoop(uint64_t id, uint32_t timeout, task_t cb)
     const auto pos = (_tick + delay) % _capacity;
     _wheel[pos].push_back(pt);
     _timers[id] = self;
+
 } // 出作用域后，pt销毁，仅有_wheel[pos]管理任务
 
 void TimerWheel::TimerRefresh(uint64_t id)
@@ -190,13 +193,14 @@ void TimerWheel::TimerCancel(uint64_t id)
 // 取消任务
 void TimerWheel::TimerCancelInLoop(uint64_t id)
 {
-    // 任务没有找到则提前返回
+    // 1.任务没有找到则提前返回
     auto it = _timers.find(id);
     if (it == _timers.end())
     {
         return;
     }
-    // 将WeakPtr变成PtrTask
+
+    // 2.将WeakPtr变成PtrTask
     PtrTask task = it->second.lock();
     if (!task)
     {
