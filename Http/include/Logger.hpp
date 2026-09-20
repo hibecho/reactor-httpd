@@ -93,13 +93,27 @@ class Logger
 };
 
 // 全部级别均编译保留，不受 SPDLOG_ACTIVE_LEVEL 影响。
-// 并发切换配置时以实际写入时的级别为准；参数不要用于业务副作用。
+// 并发切换配置时以实际写入时的级别为准。
+// 契约：所有 LOG_* 均不抛异常，失败时静默丢弃该条日志。
+//   try 覆盖单例获取、等级判断、参数求值与后端写入四处；宏实参在调用方求值，
+//   必须在宏内保护，Logger::Log 成员函数包不住它。
+//   catch 必须是 "..."：后端已由 spdlog 的 SPDLOG_LOGGER_CATCH 接住
+//   std::exception，但它对非 std 异常会重新抛出。
+//   被等级过滤或已关闭时不求值参数；参数不得承担业务副作用——抛异常会让
+//   整行日志静默消失，且不向外报告。
 #define HTTP_LOG_AT(level, ...)                                                                                        \
     do                                                                                                                 \
     {                                                                                                                  \
-        if (Logger::Instance().ShouldLog(level))                                                                       \
+        try                                                                                                            \
         {                                                                                                              \
-            Logger::Instance().Log(spdlog::source_loc{__FILE__, __LINE__, __func__}, level, __VA_ARGS__);              \
+            Logger &logger = Logger::Instance();                                                                       \
+            if (logger.ShouldLog(level))                                                                               \
+            {                                                                                                          \
+                logger.Log(spdlog::source_loc{__FILE__, __LINE__, __func__}, level, __VA_ARGS__);                      \
+            }                                                                                                          \
+        }                                                                                                              \
+        catch (...)                                                                                                    \
+        {                                                                                                              \
         }                                                                                                              \
     } while (false)
 
@@ -109,3 +123,4 @@ class Logger
 #define LOG_WARN(...) HTTP_LOG_AT(Logger::Level::Warn, __VA_ARGS__)
 #define LOG_ERROR(...) HTTP_LOG_AT(Logger::Level::Error, __VA_ARGS__)
 #define LOG_CRITICAL(...) HTTP_LOG_AT(Logger::Level::Critical, __VA_ARGS__)
+
