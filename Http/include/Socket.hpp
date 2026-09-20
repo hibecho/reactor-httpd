@@ -33,7 +33,6 @@ class Socket
   public:
     /*Socket构造函数*/
     Socket();
-    // 接管 fd 的所有权，调用者不应再关闭它。
     explicit Socket(int fd);
     Socket(const Socket &) = delete;
     Socket &operator=(const Socket &) = delete;
