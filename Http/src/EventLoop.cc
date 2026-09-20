@@ -1,3 +1,10 @@
+/**
+ * @file EventLoop.cc
+ * @brief
+ *
+ *
+ */
+
 #include "EventLoop.hpp"
 #include "Channel.hpp"
 #include "Epoller.hpp"
@@ -42,16 +49,19 @@ EventLoop::~EventLoop()
 
 void EventLoop::Loop()
 {
-    // 1.等待事件
-    std::vector<Channel *> active;
-    _ep->WaitEvent(active);
-    // 2.处理就绪事件
-    for (Channel *channel : active)
+    while (true)
     {
-        channel->Handle();
+        // 1.等待事件
+        std::vector<Channel *> active;
+        _ep->WaitEvent(active);
+        // 2.处理就绪事件
+        for (Channel *channel : active)
+        {
+            channel->Handle();
+        }
+        // 3.执行一批任务
+        ExecuteTasks();
     }
-    // 3.执行一批任务
-    ExecuteTasks();
 }
 
 void EventLoop::RunInLoop(Task task)
