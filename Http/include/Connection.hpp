@@ -104,15 +104,20 @@ class Connection : public std::enable_shared_from_this<Connection>
     void Send(std::string data);
     // 对外提供关闭接口，把操作交给所属 EventLoop
     void ShutDown();
-    // 启动非活跃销毁
-    // timeout:指定时间为非活跃连接
+    // 对外接口，可能在任意线程被调用;
+    // 启动非活跃销毁；
+    // timeout:指定多长时间被认定为非活跃连接，须大于 0，否则抛 std::invalid_argument。
+    // 参数用有符号类型：对 uint32_t 做 timeout <= 0 判断等价于只判 0，负数会在实参
+    // 转换处回绕成极大值并被时间轮静默钳位到容量上限。
     void EnableInactiveRelease(int timeout);
-    // 取消非活跃销毁
+    // 可跨线程请求；取消已登记任务，重复调用无副作用。
     void CancelInactiveRelease();
     // 协议切换
-    // 重置协议上下文，并进行更新回调函数
-    void SwitchProtocol(const std::any &context, const ConnectedCallback &conn, const MessageCallback &msg,
-                        const ClosedCallback &closed, const AnyEventCallback &event);
+    // 可跨线程请求；参数由任务持有，在所属线程一起替换。
+    // 保留缓冲区与服务器关闭回调，不重复触发建立通知。
+    // 关闭过程中忽略切换；切换后旧上下文的指针/引用不可继续使用。
+    void SwitchProtocol(std::any context, ConnectedCallback conn, MessageCallback msg, ClosedCallback closed,
+                        AnyEventCallback event);
 
   private:
     /* Channel的事件回调函数*/
@@ -122,17 +127,14 @@ class Connection : public std::enable_shared_from_this<Connection>
     void HandleError();
     void HandleEvent();
 
-    // 连接获取之后，在连接状态下进行对channel进行设置事件回调
     void EstablishedInLoop();
-    // 进入正在关闭状态，判断是否需要等待发送完成
-    // 停止接收新数据，等待已有输出发送完
     void ShutDownInLoop();
     void ReleaseInLoop();
     void SendInLoop(std::string data);
-    void EnableInactiveReleaseInLoop(int timeout);
+    void EnableInactiveReleaseInLoop(uint32_t timeout);
     void CancelInactiveReleaseInLoop();
-    void SwitchProtocolInLoop(const std::any &context, const ConnectedCallback &conn, const MessageCallback &msg,
-                              const ClosedCallback &closed, const AnyEventCallback &event);
+    void SwitchProtocolInLoop(std::any context, ConnectedCallback conn, MessageCallback msg, ClosedCallback closed,
+                              AnyEventCallback event);
 
   private:
     /*Connection模块的基础属性*/

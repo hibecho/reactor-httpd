@@ -11,22 +11,6 @@
 #include <stdexcept>
 #include <utility>
 
-namespace
-{
-// 统一使用项目日志；日志自身失败不能阻止后续连接清理。
-void ReportFailure(const char *where, const char *message) noexcept
-{
-    try
-    {
-        LOG_ERROR("Connection {}: {}", where, message);
-    }
-    catch (...)
-    {
-        // 此处不再次打印日志，避免递归失败；返回后继续清理连接。
-    }
-}
-} // namespace
-
 Connection::Connection(EventLoop *loop, uint64_t id, int fd)
     : _conn_id(id)
     , _timer_id(id)
@@ -138,8 +122,10 @@ void Connection::EstablishedInLoop()
 
     try
     {
-        if (_connected_callback)
-            _connected_callback(shared_from_this());
+        // 回调可在执行中切换协议，保留当前函数对象直到调用返回。
+        auto callback = _connected_callback;
+        if (callback)
+            callback(shared_from_this());
     }
     catch (const std::bad_alloc &)
     {
@@ -147,7 +133,7 @@ void Connection::EstablishedInLoop()
     }
     catch (...)
     {
-        ReportFailure("connected callback", "exception; closing connection");
+        LOG_ERROR("Connection {}: {}", "connected callback", "exception; closing connection");
         HandleError();
     }
 }
@@ -170,8 +156,9 @@ void Connection::HandleRead()
         try
         {
             _in_buffer->Write(buffer, static_cast<std::size_t>(received));
-            if (_message_callback && _in_buffer->GetReadableSize() > 0)
-                _message_callback(self, _in_buffer.get());
+            auto callback = _message_callback;
+            if (callback && _in_buffer->GetReadableSize() > 0)
+                callback(self, _in_buffer.get());
         }
         catch (const std::bad_alloc &)
         {
@@ -181,12 +168,12 @@ void Connection::HandleRead()
         }
         catch (const std::exception &e)
         {
-            ReportFailure("read/message", e.what());
+            LOG_ERROR("Connection {}: {}", "read/message", e.what());
             HandleError();
         }
         catch (...)
         {
-            ReportFailure("read/message", "unknown exception");
+            LOG_ERROR("Connection {}: {}", "read/message", "unknown exception");
             HandleError();
         }
         return;
@@ -413,11 +400,11 @@ void Connection::ReleaseInLoop()
         }
         catch (const std::exception &e)
         {
-            ReportFailure("close callback", e.what());
+            LOG_ERROR("Connection {}: {}", "close callback", e.what());
         }
         catch (...)
         {
-            ReportFailure("close callback", "unknown exception");
+            LOG_ERROR("Connection {}: {}", "close callback", "unknown exception");
         }
     }
 }
@@ -433,8 +420,9 @@ void Connection::HandleEvent()
         if (enable_inactive_release)
             _loop->TimerRefresh(_timer_id);
 
-        if (_event_callback)
-            _event_callback(shared_from_this());
+        auto callback = _event_callback;
+        if (callback)
+            callback(shared_from_this());
     }
     catch (const std::bad_alloc &)
     {
@@ -442,7 +430,7 @@ void Connection::HandleEvent()
     }
     catch (...)
     {
-        ReportFailure("event callback", "exception; closing connection");
+        LOG_ERROR("Connection {}: {}", "event callback", "exception; closing connection");
         HandleError();
     }
 }
@@ -454,10 +442,13 @@ void Connection::EnableInactiveRelease(int timeout)
 
     auto self = shared_from_this();
 
-    _loop->RunInLoop([self, timeout] { self->EnableInactiveReleaseInLoop(timeout); });
+    // 上面的校验已经排除非正值，这里的转换不会回绕。
+    const uint32_t normalized = static_cast<uint32_t>(timeout);
+
+    _loop->RunInLoop([self, normalized] { self->EnableInactiveReleaseInLoop(normalized); });
 }
 
-void Connection::EnableInactiveReleaseInLoop(int timeout)
+void Connection::EnableInactiveReleaseInLoop(uint32_t timeout)
 {
     assert(_loop->IsInLoopThread());
 
@@ -466,11 +457,10 @@ void Connection::EnableInactiveReleaseInLoop(int timeout)
 
     std::weak_ptr<Connection> weak = shared_from_this();
 
-    _loop->TimerAdd(_timer_id, static_cast<uint32_t>(timeout), [weak]() noexcept {
-        auto conn = weak.lock();
+    _loop->TimerAdd(_timer_id, timeout, [weak]() noexcept {
+        ConnectionPtr conn = weak.lock();
         if (!conn)
             return; // 连接对象已经不存在。
-
         try
         {
             // 超时了：安排延迟释放，不再等待输出发送完。
@@ -480,10 +470,55 @@ void Connection::EnableInactiveReleaseInLoop(int timeout)
         {
             // 当前时间轮在 TimerTask 析构中执行回调，
             // 不能让异常逃出析构函数。
-            ReportFailure("idle timeout", "无法安排连接释放");
+            LOG_ERROR("Connection {}: {}", "idle timeout", "无法安排连接释放");
             std::terminate();
         }
     });
 
     enable_inactive_release = true;
+}
+
+void Connection::CancelInactiveRelease()
+{
+    auto self = shared_from_this();
+    _loop->RunInLoop([self] { self->CancelInactiveReleaseInLoop(); });
+}
+
+void Connection::CancelInactiveReleaseInLoop()
+{
+    assert(_loop->IsInLoopThread());
+    if (!enable_inactive_release)
+        return;
+
+    // 必须取消任务本身，仅停止刷新仍会导致原任务到期关闭连接。
+    _loop->TimerCancel(_timer_id);
+    enable_inactive_release = false;
+}
+
+void Connection::SwitchProtocol(std::any context, ConnectedCallback conn, MessageCallback msg, ClosedCallback closed,
+                                AnyEventCallback event)
+{
+    auto self = shared_from_this();
+    // 任务自己拥有参数，调用方的局部变量和临时对象可以先销毁。
+    _loop->RunInLoop([self, context = std::move(context), conn = std::move(conn), msg = std::move(msg),
+                      closed = std::move(closed), event = std::move(event)]() mutable {
+        self->SwitchProtocolInLoop(std::move(context), std::move(conn), std::move(msg), std::move(closed),
+                                   std::move(event));
+    });
+}
+
+void Connection::SwitchProtocolInLoop(std::any context, ConnectedCallback conn, MessageCallback msg,
+                                      ClosedCallback closed, AnyEventCallback event)
+{
+    assert(_loop->IsInLoopThread());
+    if (_status != ConnStatus::CONNECTING && _status != ConnStatus::CONNECTED)
+        return;
+
+    // 参数准备完成后再移动替换；这些移动赋值不抛异常。
+    // 当前正在执行的回调由调用处的局部副本保护。
+    _context = std::move(context);
+    _connected_callback = std::move(conn);
+    _message_callback = std::move(msg);
+    _closed_callback = std::move(closed);
+    _event_callback = std::move(event);
 }
