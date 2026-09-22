@@ -14,6 +14,8 @@
  *   - 有工作线程：依次选择 _threads[_next]，随后循环更新索引。
  */
 
+#pragma once
+
 #include <memory>
 #include <vector>
 
@@ -24,6 +26,7 @@ class LoopThreadPool
   public:
     /*LoopThreadPool构造函数*/
     explicit LoopThreadPool(EventLoop *baseloop);
+    ~LoopThreadPool();
     LoopThreadPool(const LoopThreadPool &) = delete;
     LoopThreadPool &operator=(const LoopThreadPool &) = delete;
 

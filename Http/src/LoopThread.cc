@@ -3,18 +3,20 @@
 
 LoopThread::LoopThread()
     : _loop(nullptr)
-    , _thread([this]() { ThreadEntry(); })
+    , _thread([this]() {
+        ThreadEntry();
+    })
 {
 }
 
 LoopThread::~LoopThread()
-{}
+{
+}
 
 /**
  * @brief
- * EventLoop *LoopThread::GetLoop()
- * void LoopThread::ThreadEntry()
- *
+ *  GetLoop调用线程:获取EventLoop
+ *  ThreadEntry:给EventLoop赋值
  * 时序图：
  *
  * 调用线程                          工作线程
@@ -37,7 +39,9 @@ EventLoop *LoopThread::GetLoop()
         // 安全地读取 _loop，避免和工作线程的写入产生数据竞争。
         std::unique_lock<std::mutex> lock(_mutex);
         // 保证了读取 _loop时非空
-        _cv.wait(lock, [this]() { return _loop != nullptr; });
+        _cv.wait(lock, [this]() {
+            return _loop != nullptr;
+        });
 
         loop = _loop;
     }

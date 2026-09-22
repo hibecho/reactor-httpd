@@ -100,7 +100,9 @@ void Connection::SetAnyEventCallback(AnyEventCallback cb)
 void Connection::Established()
 {
     auto self = shared_from_this();
-    _loop->RunInLoop([self] { self->EstablishedInLoop(); });
+    _loop->RunInLoop([self] {
+        self->EstablishedInLoop();
+    });
 }
 
 void Connection::EstablishedInLoop()
@@ -110,11 +112,21 @@ void Connection::EstablishedInLoop()
         return;
 
     // 服务器连接表负责保活；回调不强持有自己，避免循环引用。
-    _channel->SetReadCallback([this] { HandleRead(); });
-    _channel->SetWriteCallback([this] { HandleWrite(); });
-    _channel->SetCloseCallback([this] { HandleClose(); });
-    _channel->SetErrorCallback([this] { HandleError(); });
-    _channel->SetEventCallback([this] { HandleEvent(); });
+    _channel->SetReadCallback([this] {
+        HandleRead();
+    });
+    _channel->SetWriteCallback([this] {
+        HandleWrite();
+    });
+    _channel->SetCloseCallback([this] {
+        HandleClose();
+    });
+    _channel->SetErrorCallback([this] {
+        HandleError();
+    });
+    _channel->SetEventCallback([this] {
+        HandleEvent();
+    });
 
     _channel->EnableRead();
     _registered = true;
@@ -198,7 +210,9 @@ void Connection::HandleRead()
 void Connection::Send(std::string data)
 {
     auto self = shared_from_this();
-    _loop->RunInLoop([self, data = std::move(data)]() mutable { self->SendInLoop(std::move(data)); });
+    _loop->RunInLoop([self, data = std::move(data)]() mutable {
+        self->SendInLoop(std::move(data));
+    });
 }
 
 void Connection::SendInLoop(std::string data)
@@ -276,7 +290,9 @@ void Connection::ShutDown()
     //- 当前就是所属线程：立即执行 ShutDownInLoop()。
     //- 当前是其他线程：任务进入所属 EventLoop 的队列。
     auto self = shared_from_this();
-    _loop->RunInLoop([self] { self->ShutDownInLoop(); });
+    _loop->RunInLoop([self] {
+        self->ShutDownInLoop();
+    });
 }
 
 void Connection::ShutDownInLoop()
@@ -316,7 +332,9 @@ void Connection::HandleError()
     // 1. QueueInLoop 而非 RunInLoop：Channel::Handle 还可能继续分发本轮事件。
     //    延迟实际清理：等本轮事件分发结束，才执行 ReleaseInLoop()。
     auto self = shared_from_this();
-    _loop->QueueInLoop([self] { self->ReleaseInLoop(); });
+    _loop->QueueInLoop([self] {
+        self->ReleaseInLoop();
+    });
 
     // 2. 安排延迟释放
     _release_pending = true;
@@ -445,7 +463,9 @@ void Connection::EnableInactiveRelease(int timeout)
     // 上面的校验已经排除非正值，这里的转换不会回绕。
     const uint32_t normalized = static_cast<uint32_t>(timeout);
 
-    _loop->RunInLoop([self, normalized] { self->EnableInactiveReleaseInLoop(normalized); });
+    _loop->RunInLoop([self, normalized] {
+        self->EnableInactiveReleaseInLoop(normalized);
+    });
 }
 
 void Connection::EnableInactiveReleaseInLoop(uint32_t timeout)
@@ -481,7 +501,9 @@ void Connection::EnableInactiveReleaseInLoop(uint32_t timeout)
 void Connection::CancelInactiveRelease()
 {
     auto self = shared_from_this();
-    _loop->RunInLoop([self] { self->CancelInactiveReleaseInLoop(); });
+    _loop->RunInLoop([self] {
+        self->CancelInactiveReleaseInLoop();
+    });
 }
 
 void Connection::CancelInactiveReleaseInLoop()

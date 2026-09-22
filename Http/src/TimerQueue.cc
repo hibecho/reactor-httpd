@@ -21,6 +21,13 @@ uint32_t NormalizeTimeout(uint32_t timeout, uint32_t capacity)
 }
 } // namespace
 
+/**
+ * @brief Construct a new Timer Task:: Timer Task object
+ *
+ * @param id
+ * @param timeout
+ * @param cb
+ */
 TimerTask::TimerTask(uint64_t id, uint32_t timeout, const task_t &cb)
     : _id(id)
     , _timeout(timeout)
@@ -55,6 +62,11 @@ TimerTask::~TimerTask()
     _release();
 }
 
+/**
+ * @brief Construct a new Timer Wheel:: Timer Wheel object
+ *
+ * @param loop
+ */
 TimerWheel::TimerWheel(EventLoop *loop)
     : _loop(loop)
     , _timerfd(CreateTimerfd())
@@ -106,7 +118,9 @@ TimerWheel::~TimerWheel()
 
 void TimerWheel::TimerAdd(uint64_t id, uint32_t timeout, task_t cb)
 {
-    _loop->RunInLoop([this, id, timeout, cb]() { TimerAddInLoop(id, timeout, cb); });
+    _loop->RunInLoop([this, id, timeout, cb]() {
+        TimerAddInLoop(id, timeout, cb);
+    });
 }
 
 // 向_wheel中添加定时任务
@@ -143,7 +157,9 @@ void TimerWheel::TimerAddInLoop(uint64_t id, uint32_t timeout, task_t cb)
 
     // 移除_timers中观察的指定 ID 任务，但只在记录仍属于 self 时移除
     // 防止因添加新任务更新，而删除了_timer中的新任务记录
-    pt->SetRelease([this, id, self]() { RemoveTimerIfOwned(id, self); });
+    pt->SetRelease([this, id, self]() {
+        RemoveTimerIfOwned(id, self);
+    });
 
     // 根据时钟滴答位置，添加定时任务
     const auto pos = (_tick + delay) % _capacity;
@@ -154,7 +170,9 @@ void TimerWheel::TimerAddInLoop(uint64_t id, uint32_t timeout, task_t cb)
 
 void TimerWheel::TimerRefresh(uint64_t id)
 {
-    _loop->RunInLoop([this, id]() { TimerRefreshInLoop(id); });
+    _loop->RunInLoop([this, id]() {
+        TimerRefreshInLoop(id);
+    });
 }
 
 // 刷新/延迟_wheel中的任务
@@ -187,7 +205,9 @@ void TimerWheel::TimerRefreshInLoop(uint64_t id)
 
 void TimerWheel::TimerCancel(uint64_t id)
 {
-    _loop->RunInLoop([this, id]() { TimerCancelInLoop(id); });
+    _loop->RunInLoop([this, id]() {
+        TimerCancelInLoop(id);
+    });
 }
 
 // 取消任务

@@ -32,14 +32,13 @@ class Channel
     using EventCallback = std::function<void()>;
 
   public:
+    /*Channel的构造函数*/
     Channel(int fd, EventLoop *loop);
-    // 持有登记这一独占关系，禁止拷贝：
     Channel(const Channel &) = delete;
     Channel &operator=(const Channel &) = delete;
 
     // 判断是否监控了可读
     bool Readable();
-
     // 判断是否监控了可写
     bool Writeable();
     // 启动读事件监控
@@ -60,10 +59,10 @@ class Channel
     int Getfd() const;
     // 设置已就绪事件
     void SetREvents(uint32_t revents);
-
     // 获取事件
     uint32_t GetEvents();
 
+    /*设置事件回调*/
     void SetReadCallback(EventCallback cb);
     void SetWriteCallback(EventCallback cb);
     void SetErrorCallback(EventCallback cb);

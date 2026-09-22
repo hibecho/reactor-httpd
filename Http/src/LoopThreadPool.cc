@@ -1,12 +1,13 @@
 #include "LoopThreadPool.hpp"
 #include "EventLoop.hpp"
+#include "Logger.hpp"
 #include "LoopThread.hpp"
 
-explicit LoopThreadPool::LoopThreadPool(EventLoop *baseloop)
-    : _thread_count(0)
-    , _baseloop(baseloop)
-    , _next(0)
+LoopThreadPool::LoopThreadPool(EventLoop *baseloop)
+    : _baseloop(baseloop)
 {}
+
+LoopThreadPool::~LoopThreadPool() = default;
 
 // 启动前配置，拒绝负数
 void LoopThreadPool::SetThreadCount(int count)
@@ -31,6 +32,7 @@ void LoopThreadPool::Create()
         }
     }
 }
+
 // 启动后分配，返回目标循环。
 EventLoop *LoopThreadPool::NextLoop()
 {

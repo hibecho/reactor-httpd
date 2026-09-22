@@ -2,9 +2,6 @@
  * @file Logger.hpp
  * @brief
  *
- *
- *
- *
  */
 
 #pragma once
@@ -123,4 +120,3 @@ class Logger
 #define LOG_WARN(...) HTTP_LOG_AT(Logger::Level::Warn, __VA_ARGS__)
 #define LOG_ERROR(...) HTTP_LOG_AT(Logger::Level::Error, __VA_ARGS__)
 #define LOG_CRITICAL(...) HTTP_LOG_AT(Logger::Level::Critical, __VA_ARGS__)
-

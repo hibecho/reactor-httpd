@@ -2,13 +2,16 @@
  * @file EventLoop.cc
  * @brief
  *
- *
+ * 创建 eventfd 失败 -> 抛出异常 ->停止 EventLoop 构造，不再创建后面的 Channel
  */
 
 #include "EventLoop.hpp"
+#include "Buffer.hpp"
 #include "Channel.hpp"
 #include "Epoller.hpp"
 #include "Logger.hpp"
+#include "Socket.hpp"
+#include "TimerQueue.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <memory>
@@ -21,12 +24,6 @@
 #include <utility>
 #include <vector>
 
-/**
- * @brief
- *
- *  创建 eventfd 失败 -> 抛出异常 ->停止 EventLoop 构造，不再创建后面的 Channel
- *
- */
 EventLoop::EventLoop()
     : _thread_id(std::this_thread::get_id())
     , _event_fd(CreateEventfd())
@@ -37,7 +34,9 @@ EventLoop::EventLoop()
     // 给_event_channel注册回调方法
     // 1.设置读事件回调
     // 2.设置可读事件
-    _event_channel->SetReadCallback([this]() { HandleEventfd(); });
+    _event_channel->SetReadCallback([this]() {
+        HandleEventfd();
+    });
     _event_channel->EnableRead();
 }
 
@@ -49,19 +48,32 @@ EventLoop::~EventLoop()
 
 void EventLoop::Loop()
 {
-    while (true)
+    while (!_quit.load())
     {
-        // 1.等待事件
-        std::vector<Channel *> active;
-        _ep->WaitEvent(active);
-        // 2.处理就绪事件
-        for (Channel *channel : active)
-        {
-            channel->Handle();
-        }
-        // 3.执行一批任务
-        ExecuteTasks();
+        LoopOnce();
     }
+}
+
+// 处理一轮：等待一次就绪事件 → 分发 → 执行一批任务
+// 不读取也不重置停止标志：停止判定只由 Loop() 的循环条件负责。
+void EventLoop::LoopOnce()
+{
+    // 1.等待事件
+    std::vector<Channel *> active;
+    _ep->WaitEvent(active);
+    // 2.处理就绪事件
+    for (Channel *channel : active)
+    {
+        channel->Handle();
+    }
+    // 3.执行一批任务
+    ExecuteTasks();
+}
+
+void EventLoop::Quit()
+{
+    _quit.store(true);
+    WeakupEventfd();
 }
 
 void EventLoop::RunInLoop(Task task)

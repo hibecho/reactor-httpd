@@ -111,7 +111,7 @@ class Buffer
     // 查看 length 字节，不消费数据，不进行推进读偏移。
     // destination 必须有足够的可写空间，且不得与缓冲区存储重叠。
     void Peek(void *destination, std::size_t length) const;
-    
+
     // 将 length 字节可读数据复制到 destination，然后推进读偏移。
     // 全部消费后将读写偏移归零，不自动添加字符串结束符。
     // length > GetReadableSize() 时抛出 std::out_of_range，

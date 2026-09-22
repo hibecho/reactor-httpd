@@ -19,6 +19,7 @@
  *  1.在线程中对描述符进行事件监控
  *  2.有描述符就绪则对描述符进行事件处理 (如何保证处理回调函数中的操作都在线程中)
  *  3.就绪事件处理完，这时候在对任务队列的所有任务进行依次执行
+ * 这三步构成一轮，即 LoopOnce()；Loop() 反复执行它直到 Quit()。
  *
  *
  * 成员包含:
@@ -30,17 +31,21 @@
  */
 
 #pragma once
-#include "Buffer.hpp"
-#include "Channel.hpp"
-#include "Epoller.hpp"
-#include "Logger.hpp"
-#include "Socket.hpp"
+
 #include "TimerQueue.hpp"
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <sys/eventfd.h>
+#include <thread>
+class Buffer;
+class Channel;
+class Epoller;
+class Logger;
+class Socket;
+
 class EventLoop
 {
     using Task = std::function<void()>;
@@ -53,8 +58,20 @@ class EventLoop
     EventLoop &operator=(const EventLoop &) = delete;
 
     /*EventLoop模块的接口*/
-    //  必须由所属线程调用
+
+    // 持续事件循环：反复执行 LoopOnce()，直到 Quit() 置位。
+    // 必须由所属线程调用；Quit 后不能重新启动（不重置停止标志）。
     void Loop();
+    // 处理一轮：等待一次就绪事件 → 分发 → 执行一批任务，然后返回。
+    // 不读取也不重置停止标志，停止判定由 Loop() 的循环条件负责。
+    // 没有就绪事件且 eventfd 未被写过时会阻塞在 epoll_wait（超时为 -1）。
+    // 必须由所属线程调用。
+    void LoopOnce();
+    // 可跨线程调用：请求退出并唤醒，完成当前轮后返回。
+    // 调用期间对象必须存活；唤醒失败会抛异常。
+    // 上层须先停止提交任务并完成连接清理，不保证排空后来入队的任务。
+    void Quit();
+
     // 当前就是所属线程：立即执行
     // 其他线程：入队并唤醒
     void RunInLoop(Task task);
@@ -84,6 +101,7 @@ class EventLoop
     void ExecuteTasks();       // 取出一批任务，解锁后执行
 
   private:
+    std::atomic<bool> _quit{false};
     /*EventLoop模块：维护EventLoop的任务队列*/
     std::thread::id _thread_id;              // 线程id: 判断操作是否发生在所属线程
     int _event_fd;                           // _event_fd: 通知任务队列的文件描述符

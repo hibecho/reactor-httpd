@@ -51,9 +51,10 @@ bool Socket::Create()
         errno = EALREADY;
         return false;
     }
-    // int socket(int domain, int type, int protocol);
+    // 获取监听套接字
+    //  int socket(int domain, int type, int protocol);
     _sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (_sockfd == -1)
+    if (_sockfd < 0)
     {
         const int saved_errno = errno;
         LOG_ERROR("Failed to create socket:errno={}", saved_errno);

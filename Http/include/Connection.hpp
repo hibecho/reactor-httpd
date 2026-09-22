@@ -107,8 +107,8 @@ class Connection : public std::enable_shared_from_this<Connection>
     // 对外接口，可能在任意线程被调用;
     // 启动非活跃销毁；
     // timeout:指定多长时间被认定为非活跃连接，须大于 0，否则抛 std::invalid_argument。
-    // 参数用有符号类型：对 uint32_t 做 timeout <= 0 判断等价于只判 0，负数会在实参
-    // 转换处回绕成极大值并被时间轮静默钳位到容量上限。
+    // 参数用有符号类型：对 uint32_t 做 timeout <= 0 判断等价于只判 0，
+    // 负数会在实参转换处回绕成极大值并被时间轮静默钳位到容量上限。
     void EnableInactiveRelease(int timeout);
     // 可跨线程请求；取消已登记任务，重复调用无副作用。
     void CancelInactiveRelease();
@@ -127,10 +127,10 @@ class Connection : public std::enable_shared_from_this<Connection>
     void HandleError();
     void HandleEvent();
 
+    void SendInLoop(std::string data);
+    void ReleaseInLoop();
     void EstablishedInLoop();
     void ShutDownInLoop();
-    void ReleaseInLoop();
-    void SendInLoop(std::string data);
     void EnableInactiveReleaseInLoop(uint32_t timeout);
     void CancelInactiveReleaseInLoop();
     void SwitchProtocolInLoop(std::any context, ConnectedCallback conn, MessageCallback msg, ClosedCallback closed,
