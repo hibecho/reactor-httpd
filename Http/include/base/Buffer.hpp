@@ -36,6 +36,7 @@
 
 #pragma once
 #include <cstddef>
+#include <iosfwd>
 #include <string>
 #include <vector>
 
@@ -163,3 +164,8 @@ class Buffer
     std::size_t _read_index = 0;
     std::size_t _write_index = 0;
 };
+
+// 将全部可读数据按字节原样写入输出流，保留内嵌空字符，不消费数据、不改变偏移。
+// 可读数据为空时不写入任何字节，因此该缓冲区可安全地参与链式输出。
+// 不附加任何分隔符或换行；写入失败时置位 os 的错误状态而不抛异常。
+std::ostream &operator<<(std::ostream &os, const Buffer &buffer);

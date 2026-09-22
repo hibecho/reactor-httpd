@@ -1,6 +1,7 @@
 #include "base/Buffer.hpp"
 #include <algorithm>
 #include <cstring>
+#include <ostream>
 #include <stdexcept>
 #include <utility>
 
@@ -270,4 +271,16 @@ void Buffer::Clear() noexcept
 {
     _read_index = 0;
     _write_index = 0;
+}
+
+std::ostream &operator<<(std::ostream &os, const Buffer &buffer)
+{
+    const std::size_t readable = buffer.GetReadableSize();
+    // 长度为 0 时 GetReadPosition() 可能不指向有效存储，直接跳过写入。
+    if (readable == 0)
+    {
+        return os;
+    }
+    os.write(buffer.GetReadPosition(), static_cast<std::streamsize>(readable));
+    return os;
 }
