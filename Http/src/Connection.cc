@@ -1,9 +1,9 @@
-#include "Connection.hpp"
-#include "Buffer.hpp"
-#include "Channel.hpp"
-#include "EventLoop.hpp"
-#include "Logger.hpp"
-#include "Socket.hpp"
+#include "tcp/Connection.hpp"
+#include "base/Buffer.hpp"
+#include "reactor/Channel.hpp"
+#include "reactor/EventLoop.hpp"
+#include "base/Logger.hpp"
+#include "tcp/Socket.hpp"
 #include <cassert>
 #include <cerrno>
 #include <exception>

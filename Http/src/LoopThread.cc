@@ -1,5 +1,5 @@
-#include "LoopThread.hpp"
-#include "EventLoop.hpp"
+#include "thread/LoopThread.hpp"
+#include "reactor/EventLoop.hpp"
 
 LoopThread::LoopThread()
     : _loop(nullptr)
