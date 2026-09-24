@@ -1,14 +1,25 @@
 #include "protocol/HttpRequest.hpp"
 
+#include <utility>
+
 namespace
 {
-// HTTP 字段采用 ASCII 大小写规则，不依赖系统区域设置。
+// 把 ASCII 大写字母转为小写，其余字节原样返回。
+char ToLowerAscii(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z')
+    {
+        return static_cast<char>(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+// 返回转为小写后的字符串副本。
 std::string AsciiLower(std::string value)
 {
     for (char &ch : value)
     {
-        if (ch >= 'A' && ch <= 'Z')
-            ch = static_cast<char>(ch - 'A' + 'a');
+        ch = ToLowerAscii(ch);
     }
     return value;
 }
@@ -44,12 +55,14 @@ std::size_t HttpRequest::GetBodySize() const
 // 查询请求头是否存在，名称忽略 ASCII 大小写。
 bool HttpRequest::FindHeader(const std::string &name) const
 {
-    auto it = _headers.find(AsciiLower(name));
-    if (it == _headers.end())
+    for (const auto &field : _headers)
     {
-        return false;
+        if (SameFieldName(field.first, name))
+        {
+            return true;
+        }
     }
-    return true;
+    return false;
 }
 
 bool HttpRequest::FindParam(const std::string &name) const
@@ -62,15 +75,31 @@ bool HttpRequest::FindParam(const std::string &name) const
     return true;
 }
 
-// 获取指定的头部
+// 获取指定的头部；同名字段重复出现时返回第一条。
 std::string HttpRequest::GetHeaders(const std::string &key) const
 {
-    auto it = _headers.find(AsciiLower(key));
-    if (it == _headers.end())
+    for (const auto &field : _headers)
     {
-        return "";
+        if (SameFieldName(field.first, key))
+        {
+            return field.second;
+        }
     }
-    return it->second;
+    return "";
+}
+
+// 获取全部同名头部，保持插入顺序。
+std::vector<std::string> HttpRequest::GetHeaderValues(const std::string &key) const
+{
+    std::vector<std::string> values;
+    for (const auto &field : _headers)
+    {
+        if (SameFieldName(field.first, key))
+        {
+            values.push_back(field.second);
+        }
+    }
+    return values;
 }
 
 std::string HttpRequest::GetParams(const std::string &key) const
@@ -86,40 +115,30 @@ std::string HttpRequest::GetParams(const std::string &key) const
 // 构建请求时使用。
 void HttpRequest::SetMethod(std::string method)
 {
-    _method = method;
+    _method = std::move(method);
 }
 void HttpRequest::SetPath(std::string path)
 {
-    _path = path;
+    _path = std::move(path);
 }
 void HttpRequest::SetQuery(std::string query)
 {
-    _query = query;
+    _query = std::move(query);
 }
 void HttpRequest::SetVersion(std::string version)
 {
-    _version = version;
+    _version = std::move(version);
 }
 
+// 字段名统一转小写；原样追加，不去重、不合并。
 void HttpRequest::AddHeader(std::string name, std::string value)
 {
-    name = AsciiLower(name);
-    if (name == "connection")
-    {
-        auto it = _headers.find(name);
-        if (it != _headers.end())
-        {
-            it->second += ", ";
-            it->second += value;
-            return;
-        }
-    }
-    _headers.emplace(name, value);
+    _headers.emplace_back(AsciiLower(std::move(name)), std::move(value));
 }
 
 void HttpRequest::AddParam(std::string name, std::string value)
 {
-    _params.emplace(name, value);
+    _params.emplace(std::move(name), std::move(value));
 }
 
 void HttpRequest::AppendBody(std::string_view data)
@@ -131,28 +150,29 @@ void HttpRequest::AppendBody(std::string_view data)
 
 bool HttpRequest::HasConnectionToken(std::string_view token) const
 {
-    // 1.找到 Connection 请求头
-    const auto it = _headers.find("connection");
-    if (it == _headers.end())
-        return false;
-    // 2.，字段名比较忽略 ASCII 大小写。
-    const std::string value = AsciiLower(it->second);
-    std::string_view remaining(value);
-
-    // 3.按逗号拆分字段值
-    while (!remaining.empty())
+    // 同名 Connection 可能分散在多条字段行里，需要逐条检查。
+    for (const auto &field : _headers)
     {
-        const auto comma = remaining.find(',');
-        auto item = remaining.substr(0, comma);
-        while (!item.empty() && (item.front() == ' ' || item.front() == '\t'))
-            item.remove_prefix(1);
-        while (!item.empty() && (item.back() == ' ' || item.back() == '\t'))
-            item.remove_suffix(1);
-        if (item == token)
-            return true;
-        if (comma == std::string_view::npos)
-            break;
-        remaining.remove_prefix(comma + 1);
+        if (!SameFieldName(field.first, "connection"))
+            continue;
+
+        // 字段值按逗号拆分，忽略两端空白与 ASCII 大小写，完整匹配标记。
+        const std::string value = AsciiLower(field.second);
+        std::string_view remaining(value);
+        while (!remaining.empty())
+        {
+            const auto comma = remaining.find(',');
+            auto item = remaining.substr(0, comma);
+            while (!item.empty() && (item.front() == ' ' || item.front() == '\t'))
+                item.remove_prefix(1);
+            while (!item.empty() && (item.back() == ' ' || item.back() == '\t'))
+                item.remove_suffix(1);
+            if (item == token)
+                return true;
+            if (comma == std::string_view::npos)
+                break;
+            remaining.remove_prefix(comma + 1);
+        }
     }
     return false;
 }
@@ -178,4 +198,21 @@ void HttpRequest::Reset()
     _headers.clear();
     _params.clear();
     _body.clear();
+}
+
+// 两个字段名是否相同，按 ASCII 忽略大小写。
+bool HttpRequest::SameFieldName(std::string_view lhs, std::string_view rhs)
+{
+    if (lhs.size() != rhs.size())
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i)
+    {
+        if (ToLowerAscii(lhs[i]) != ToLowerAscii(rhs[i]))
+        {
+            return false;
+        }
+    }
+    return true;
 }

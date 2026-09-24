@@ -3,18 +3,23 @@
  *
  * 1.HTTP报文结构
  *
- * 请求行: 请求方法 + 空格 + 请求目标 + 空格 + HTTP 版本 + CRLF (\r\n)
+ * - 请求行: 请求方法 + 空格 + 请求目标 + 空格 + HTTP 版本 + CRLF (\r\n)
+ *
  * 示例：
  * GET /users/42?expand=orders HTTP/1.1 \r\n
  *
- * 正文: key:value
+ * - 请求头: key:value
+ *
  * 示例：
  * Host: api.example.com
  * Content-Type: application/json
  * Content-Length: 16
  * Accept: application/json
  *
- * 通过正则表达式std::smatch对报文进行解析
+ * - 请求正文:
+ *
+ * \r\n
+ * hello
  *
  * 2.功能性接口
  *
@@ -29,10 +34,15 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 class HttpRequest
 {
-    using Fields = std::unordered_map<std::string, std::string>;
+    // 头字段按插入顺序保存，允许同名字段重复出现。
+    using Headers = std::vector<std::pair<std::string, std::string>>;
+    // 查询参数按名称唯一保存。
+    using Params = std::unordered_map<std::string, std::string>;
 
   public:
     // 以下接口返回内部字符串的只读引用，避免复制；引用不得超出请求对象的生命周期。
@@ -55,8 +65,11 @@ class HttpRequest
     // 判断名为 name 的查询参数是否存在；值为空不代表参数不存在。
     bool FindParam(const std::string &name) const;
 
-    // 获取名称为 key 的请求头值，返回字符串副本；键不存在时的行为需在实现中明确。
+    // 获取名称为 key 的第一个请求头值，返回字符串副本；键不存在时返回空字符串。
+    // 同名字段重复出现时只取第一条，需要全部取值请用 GetHeaderValues。
     std::string GetHeaders(const std::string &key) const;
+    // 获取名称为 key 的全部请求头值，按插入顺序返回；键不存在时返回空 vector。
+    std::vector<std::string> GetHeaderValues(const std::string &key) const;
     // 获取名称为 key 的查询参数值，返回字符串副本；键不存在时的行为需在实现中明确。
     std::string GetParams(const std::string &key) const;
 
@@ -69,7 +82,7 @@ class HttpRequest
     // 设置 HTTP 协议版本，version 例如 "HTTP/1.1"。
     void SetVersion(std::string version);
 
-    // 名称统一为小写；重复 Connection 值用逗号合并，其他同名头保留首次值。
+    // 字段名统一转为小写；按插入顺序追加，允许同名字段重复出现。
     void AddHeader(std::string name, std::string value);
     // 添加查询参数，name 为参数名称，value 为参数值；同名键的处理策略需在实现中明确。
     void AddParam(std::string name, std::string value);
@@ -84,15 +97,16 @@ class HttpRequest
   private:
     // 按逗号拆分 Connection 值，忽略两端空白和 ASCII 大小写，完整匹配小写标记。
     bool HasConnectionToken(std::string_view token) const;
+    // 两个字段名是否相同，按 ASCII 忽略大小写。
+    static bool SameFieldName(std::string_view lhs, std::string_view rhs);
 
     std::string _method;  // 请求方法，表示客户端希望执行的操作
     std::string _path;    // 请求目标的路径部分，通常用于路由匹配
     std::string _query;   // ? 后面的原始查询字符串，不包含 ?
     std::string _version; // HTTP 协议版本
 
-    Fields _headers;   // 请求头字段，保存请求的附加信息
-    Fields _params;    // 将查询字符串拆分后得到的名称和值
-    std::string _body; // 空行后面的正文
-
+    Headers _headers;     // 请求头字段，按插入顺序保存，允许同名重复
+    Params _params;       // 将查询字符串拆分后得到的名称和值
+    std::string _body;    // 空行后面的正文
     std::smatch _matches; // 资源路径的正则提取数据
 };
