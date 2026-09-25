@@ -7,11 +7,11 @@
 
 #include "reactor/EventLoop.hpp"
 #include "base/Buffer.hpp"
+#include "base/Logger.hpp"
 #include "reactor/Channel.hpp"
 #include "reactor/Epoller.hpp"
-#include "base/Logger.hpp"
-#include "tcp/Socket.hpp"
 #include "reactor/TimerQueue.hpp"
+#include "tcp/Socket.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <memory>
@@ -153,7 +153,6 @@ int EventLoop::CreateEventfd() const
 // 写 eventfd
 void EventLoop::WeakupEventfd()
 {
-
     const uint64_t cnt = 1;
 
     while (true)
