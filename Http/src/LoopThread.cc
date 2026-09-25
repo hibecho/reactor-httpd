@@ -1,18 +1,3 @@
-#include "thread/LoopThread.hpp"
-#include "reactor/EventLoop.hpp"
-
-LoopThread::LoopThread()
-    : _loop(nullptr)
-    , _thread([this]() {
-        ThreadEntry();
-    })
-{
-}
-
-LoopThread::~LoopThread()
-{
-}
-
 /**
  * @brief
  *  GetLoop调用线程:获取EventLoop
@@ -30,6 +15,20 @@ LoopThread::~LoopThread()
  *   被唤醒，重新获得锁
  *   再次检查：_loop 已就绪
  */
+#include "thread/LoopThread.hpp"
+#include "reactor/EventLoop.hpp"
+
+LoopThread::LoopThread()
+    : _loop(nullptr)
+    , _thread([this]() {
+        ThreadEntry();
+    })
+{}
+
+LoopThread::~LoopThread()
+{}
+
+
 
 // 调用线程:获取EventLoop
 EventLoop *LoopThread::GetLoop()
