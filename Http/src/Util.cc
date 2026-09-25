@@ -216,6 +216,7 @@ std::string_view Util::StatusDescription(int status)
         {201, "Created"},
         {202, "Accepted"},
         {204, "No Content"},
+        {205, "Reset Content"},
         {206, "Partial Content"},
 
         {301, "Moved Permanently"},
@@ -237,6 +238,7 @@ std::string_view Util::StatusDescription(int status)
         {415, "Unsupported Media Type"},
         {416, "Range Not Satisfiable"},
         {429, "Too Many Requests"},
+        {431, "Request Header Fields Too Large"},
 
         {500, "Internal Server Error"},
         {501, "Not Implemented"},
@@ -287,19 +289,71 @@ std::string_view Util::MimeType(std::string_view filename)
     {
         return fallback;
     }
-    // 从'.'位置往后截取得到扩展名
-    std::string extension(filename.substr(dot));
+    // 从'.'位置往后截取得到扩展名；转小写后 .JPG 与 .jpg 得到相同结果。
+    const std::string extension = Util::ToLowerAscii(std::string(filename.substr(dot)));
+    const auto it = types.find(extension);
+    return it == types.end() ? fallback : it->second;
+}
 
-    // ASCII 大写转小写，使 .JPG 和 .jpg 得到相同结果。
-    for (char &ch : extension)
+// RFC 9110 token 的字符集。请求行/字段名解析与响应头字段名校验必须用同一份定义，
+// 否则两侧对"什么名字合法"的判断会各自漂移。
+bool Util::IsToken(std::string_view value)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+    for (unsigned char ch : value)
+    {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
+        {
+            continue;
+        }
+        // 按 unsigned char 判断，避免 char 的有符号性把非 ASCII 字节判成合法。
+        if (std::string_view("!#$%&'*+-.^_`|~").find(static_cast<char>(ch)) == std::string_view::npos)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string Util::ToLowerAscii(std::string value)
+{
+    for (char &ch : value)
     {
         if (ch >= 'A' && ch <= 'Z')
         {
             ch = static_cast<char>(ch - 'A' + 'a');
         }
     }
-    const auto it = types.find(extension);
-    return it == types.end() ? fallback : it->second;
+    return value;
+}
+
+bool Util::EqualsIgnoreCaseAscii(std::string_view lhs, std::string_view rhs)
+{
+    if (lhs.size() != rhs.size())
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i)
+    {
+        char left = lhs[i];
+        char right = rhs[i];
+        if (left >= 'A' && left <= 'Z')
+        {
+            left = static_cast<char>(left - 'A' + 'a');
+        }
+        if (right >= 'A' && right <= 'Z')
+        {
+            right = static_cast<char>(right - 'A' + 'a');
+        }
+        if (left != right)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool Util::IsDirectory(const std::filesystem::path &path)

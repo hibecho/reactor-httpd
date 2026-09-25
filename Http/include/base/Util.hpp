@@ -9,6 +9,7 @@
  *  - URL解码
  *  - 通过HTTP状态码获取描述信息
  *  - 根据文件后缀名获取
+ *  - ASCII 文本谓词：token 判断、转小写、忽略大小写比较
  *  - 判断一个文件是否是目录
  *  - 判断一个文件是否是一个普通文件
  *  - HTTP资源路径的有效性判断
@@ -46,6 +47,15 @@ class Util
     static std::string_view StatusDescription(int status);
     // 根据文件扩展名返回媒体类型
     static std::string_view MimeType(std::string_view filename);
+
+    // 以下三个 ASCII 谓词是本项目唯一的实现，请求侧解析与响应侧校验共用同一字符集。
+    // 判断是否为 RFC 9110 token：非空且只含字母数字与 "!#$%&'*+-.^_`|~"。
+    // 按 unsigned char 逐字节判断，非 ASCII 字节一律判定为 false。
+    static bool IsToken(std::string_view value);
+    // 就地转为小写后返回；只折叠 'A'-'Z'，其余字节（含高位字节）原样保留。
+    static std::string ToLowerAscii(std::string value);
+    // 按 ASCII 忽略大小写比较；长度不同直接判为不等，不折叠非 ASCII 字节。
+    static bool EqualsIgnoreCaseAscii(std::string_view lhs, std::string_view rhs);
 
     static bool IsDirectory(const std::filesystem::path &path);
 
