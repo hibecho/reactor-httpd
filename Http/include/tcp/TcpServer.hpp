@@ -42,8 +42,8 @@
 
 #pragma once
 
-#include "tcp/Connection.hpp"
 #include "reactor/TimerQueue.hpp"
+#include "tcp/Connection.hpp"
 #include <atomic>
 #include <memory>
 #include <stdint.h>
