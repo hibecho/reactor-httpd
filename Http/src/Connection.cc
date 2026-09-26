@@ -1,8 +1,8 @@
 #include "tcp/Connection.hpp"
 #include "base/Buffer.hpp"
+#include "base/Logger.hpp"
 #include "reactor/Channel.hpp"
 #include "reactor/EventLoop.hpp"
-#include "base/Logger.hpp"
 #include "tcp/Socket.hpp"
 #include <cassert>
 #include <cerrno>
