@@ -37,10 +37,11 @@ HttpContext::ParseResult HttpContext::Parse(Buffer &buffer)
     // 一次调用可以跨越多个阶段；每轮都会消费数据、切换状态或返回结果。
     for (;;)
     {
-        // 终态保持不变：完成后等待上层处理并 Reset，错误后等待上层关闭连接。
-        // 重复调用不会消费缓冲区内属于下一个请求的数据。
+        //  终态保持不变：完成后等待上层处理并 Reset，错误后等待上层关闭连接。
+        //  重复调用不会消费缓冲区内属于下一个请求的数据。
         if (_state == State::Complete)
             return ParseResult::Complete;
+
         if (_state == State::Error)
             return ParseResult::Error;
 
@@ -58,9 +59,11 @@ HttpContext::ParseResult HttpContext::Parse(Buffer &buffer)
                 buffer.MoveReadOffset(count);
             }
 
-            // 正文未收齐时等待下一批数据；收齐则由循环顶部统一返回 Complete。
+            //  正文未收齐时等待下一批数据；收齐则由循环顶部统一返回 Complete。
             if (_request.GetBodySize() != _content_length)
                 return ParseResult::NeedMore;
+
+            // 设置完成状态
             _state = State::Complete;
             continue;
         }
