@@ -95,30 +95,40 @@ void HttpServer::OnConnected(const ConnectionPtr &conn)
 
 void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
 {
-    auto *context = std::any_cast<HttpContext>(&conn->GetContext());
+    // 1.获取上下文， 失败 → 抛 logic_error
+    HttpContext *context = std::any_cast<HttpContext>(&conn->GetContext());
     if (context == nullptr)
         throw std::logic_error("HttpServer: missing HTTP context");
 
+    // 2. 每一轮，消化一个完整请求
     while (conn->IsConnected())
     {
+        // 3.请求不完整，直接返回
         const auto result = context->Parse(*buffer);
         if (result == HttpContext::ParseResult::NeedMore)
             return;
-
-        const auto &request = context->GetRequest();
+        // 4.请求出现错误，构造错误响应
         if (result == HttpContext::ParseResult::Error)
         {
             HttpResponse error;
             SetErrorBody(error, context->GetErrorStatus());
             error.SetClose(true);
-            SendResponse(conn, request, error);
+            SendResponse(conn, context->GetRequest(), error);
             return;
         }
 
+        // 5.获得完整请求
+        const auto &request = context->GetRequest();
+
+        // 6.构造正常响应
         HttpResponse response;
+
+        // 7.设置响应结束不关闭连接
         response.SetClose(false);
+
         try
         {
+            // 8.根据request进行查找路由表，构造响应向客户端发送
             Dispatch(request, response);
         }
         catch (const std::bad_alloc &)
@@ -139,27 +149,38 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
             SetErrorBody(response, 500);
         }
 
-        // 序列化及 Send 不在业务异常捕获范围内，避免发送失败后重复生成响应。
+        // 9.序列化及 Send 不在业务异常捕获范围内，避免发送失败后重复生成响应。
         SendResponse(conn, request, response);
         if (response.IsClose())
             return;
+        // 10.清空上下文
         context->Reset();
     }
 }
 
 void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) const
 {
+    // 1.获得请求方法: method
     const auto &method = request.GetMethod();
+
+    // 2.获得请求路径:path
     const auto &path = request.GetPath();
+
+    // 3.查动态路由 _routes[{method, path}]
     auto route = _routes.find({method, path});
+
+    // 4.路由表里 HEAD 查不到时再查 GET，是为了复用 GET 的handler 来生成正确的响应头和状态码
+    // 此时只发送头、不发 body。
     if (route == _routes.end() && method == "HEAD")
         route = _routes.find({"GET", path});
+
     if (route != _routes.end())
     {
         route->second(request, response);
         return;
     }
 
+    // 5.这个路径其实是磁盘上的静态文件
     std::filesystem::path file;
     const bool static_file = ResolveStaticFile(path, file);
     if (static_file && (method == "GET" || method == "HEAD"))
@@ -168,7 +189,8 @@ void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) co
         return;
     }
 
-    // 没有当前方法时检查资源是否存在，组合动态路由和静态文件的 Allow。
+    // 6.没能命中时的归因
+    // 判断这个路径到底存不存在：完全不存在回 404，存在但方法不对回 405
     std::set<std::string> allowed;
     for (const auto &entry : _routes)
     {
@@ -247,6 +269,7 @@ void HttpServer::SendResponse(const ConnectionPtr &conn, const HttpRequest &requ
 {
     // 请求行解析失败时版本可能尚未就绪，错误响应默认使用 HTTP/1.1。
     response.SetVersion(request.GetVersion() == "HTTP/1.0" ? "HTTP/1.0" : "HTTP/1.1");
+    // 复用需要双方都同意，关闭只需要一方提出。
     response.SetClose(!request.IsKeepAlive() || response.IsClose());
     conn->Send(response.Serialize(request.GetMethod() == "HEAD"));
     if (response.IsClose())
