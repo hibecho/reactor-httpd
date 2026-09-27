@@ -35,6 +35,7 @@
 #include "reactor/TimerQueue.hpp"
 #include <atomic>
 #include <functional>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -77,6 +78,13 @@ class EventLoop
     void RunInLoop(Task task);
     // 来自其他线程，都放入队列，稍后执行
     void QueueInLoop(Task task);
+    // 入队前失败抛异常；入队后唤醒失败只记日志，周期 timerfd 保证继续推进。
+    // 返回即表示已提交，不可因唤醒失败重试同一发送。
+    void QueueInLoopCommitted(Task task);
+    // 所属线程关闭外部业务提交入口后，排空已接受任务及其派生清理。
+    void DrainPendingTasks();
+    // 所属线程设置；服务器用它安排故障停机。未设置时异常仍向调用方传播。
+    void SetExceptionHandler(std::function<void(std::exception_ptr)> handler);
     // 判断是否为所属线程
     bool IsInLoopThread() const;
 
@@ -101,11 +109,13 @@ class EventLoop
     void ExecuteTasks();       // 取出一批任务，解锁后执行
 
   private:
+    std::function<void(std::exception_ptr)> _exception_handler;
     std::atomic<bool> _quit{false};
     /*EventLoop模块：维护EventLoop的任务队列*/
     std::thread::id _thread_id;              // 线程id: 判断操作是否发生在所属线程
     int _event_fd;                           // _event_fd: 通知任务队列的文件描述符
     std::unique_ptr<Channel> _event_channel; // _event_channel: 用于管理通知任务队列的文件描述符
+    std::queue<Task> _active_tasks; // 所属线程当前批次，清理屏障也必须排空
     std::queue<Task> _tasks;                 // 任务队列
     std::mutex _mutex;                       // 保证任务队列线程安全的互斥锁
 

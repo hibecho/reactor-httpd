@@ -60,11 +60,23 @@ void EventLoop::LoopOnce()
 {
     // 1.等待事件
     std::vector<Channel *> active;
-    _ep->WaitEvent(active);
+    try { _ep->WaitEvent(active); }
+    catch (...)
+    {
+        if (!_exception_handler) throw;
+        _exception_handler(std::current_exception());
+        ExecuteTasks(); // 故障停机仍需处理连接注销和关闭任务。
+        return;
+    }
     // 2.处理就绪事件
     for (Channel *channel : active)
     {
-        channel->Handle();
+        try { channel->Handle(); }
+        catch (...)
+        {
+            if (!_exception_handler) throw;
+            _exception_handler(std::current_exception());
+        }
     }
     // 3.执行一批任务
     ExecuteTasks();
@@ -100,6 +112,38 @@ void EventLoop::QueueInLoop(Task task)
     WeakupEventfd();
 }
 
+void EventLoop::SetExceptionHandler(std::function<void(std::exception_ptr)> handler)
+{
+    if (!IsInLoopThread())
+        throw std::logic_error("SetExceptionHandler requires loop thread");
+    _exception_handler = std::move(handler);
+}
+
+void EventLoop::QueueInLoopCommitted(Task task)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _tasks.push(std::move(task));
+    }
+    try { WeakupEventfd(); }
+    catch (...) { LOG_ERROR("task committed; eventfd wake failed, awaiting timerfd"); }
+}
+
+void EventLoop::DrainPendingTasks()
+{
+    if (!IsInLoopThread())
+        throw std::logic_error("DrainPendingTasks requires loop thread");
+    for (;;)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            if (_tasks.empty() && _active_tasks.empty())
+                return;
+        }
+        ExecuteTasks();
+    }
+}
+
 bool EventLoop::IsInLoopThread() const
 {
     return _thread_id == std::this_thread::get_id();
@@ -108,20 +152,24 @@ bool EventLoop::IsInLoopThread() const
 // 取出一批任务，解锁后执行
 void EventLoop::ExecuteTasks()
 {
-    std::queue<Task> local;
-
     // 线程安全的取出任务
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        local.swap(_tasks);
+        if (_active_tasks.empty())
+            _active_tasks.swap(_tasks);
     }
 
     // 执行任务
-    while (!local.empty())
+    while (!_active_tasks.empty())
     {
-        Task task = std::move(local.front());
-        local.pop();
-        task();
+        Task task = std::move(_active_tasks.front());
+        _active_tasks.pop();
+        try { task(); }
+        catch (...)
+        {
+            if (!_exception_handler) throw;
+            _exception_handler(std::current_exception());
+        }
     }
 }
 
