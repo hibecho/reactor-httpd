@@ -53,8 +53,13 @@ class HttpServer
     void EnableInactiveRelease(int timeout);
 
     // 5.启动运行
-    // - 阻塞运行，沿用 TcpServer 生命周期；目前没有运行中停止/析构接口。
+    // - 阻塞运行；返回时停止清理和线程回收完成，运行中不得析构。
     void Start();
+    void Stop();
+    void SetResourceLimits(const ResourceLimits &limits);
+    void SetShutdownGrace(std::chrono::milliseconds grace);
+    void EnableSignalStop();
+    uint16_t GetPort() const noexcept { return _server.GetPort(); }
 
   private:
     void EnsureConfigurable() const;

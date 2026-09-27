@@ -88,6 +88,29 @@ void HttpServer::Start()
     _server.Start();
 }
 
+void HttpServer::Stop()
+{
+    _server.Stop();
+}
+
+void HttpServer::SetResourceLimits(const ResourceLimits &limits)
+{
+    EnsureConfigurable();
+    _server.SetResourceLimits(limits);
+}
+
+void HttpServer::SetShutdownGrace(std::chrono::milliseconds grace)
+{
+    EnsureConfigurable();
+    _server.SetShutdownGrace(grace);
+}
+
+void HttpServer::EnableSignalStop()
+{
+    EnsureConfigurable();
+    _server.EnableSignalStop();
+}
+
 void HttpServer::OnConnected(const ConnectionPtr &conn)
 {
     conn->SetContext(HttpContext{});
@@ -101,7 +124,7 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
         throw std::logic_error("HttpServer: missing HTTP context");
 
     // 2. 每一轮，消化一个完整请求
-    while (conn->IsConnected())
+    while (conn->CanProcessInput())
     {
         // 3.请求不完整，直接返回
         const auto result = context->Parse(*buffer);
@@ -271,7 +294,11 @@ void HttpServer::SendResponse(const ConnectionPtr &conn, const HttpRequest &requ
     response.SetVersion(request.GetVersion() == "HTTP/1.0" ? "HTTP/1.0" : "HTTP/1.1");
     // 复用需要双方都同意，关闭只需要一方提出。
     response.SetClose(!request.IsKeepAlive() || response.IsClose());
-    conn->Send(response.Serialize(request.GetMethod() == "HEAD"));
+    if (!conn->Send(response.Serialize(request.GetMethod() == "HEAD")))
+    {
+        response.SetClose(true);
+        return;
+    }
     if (response.IsClose())
         conn->ShutDown();
 }
