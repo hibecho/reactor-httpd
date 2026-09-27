@@ -49,6 +49,9 @@ class Acceptor
     // 登记监听套接字的读事件，开始接收连接。重复调用无副作用。
     // 未调用时 accept 回调不会被执行——登记前到达的连接也不会被 accept。
     void StartAccepting();
+    // 所属 loop 线程调用；终止监听并关闭 fd，重复调用无副作用。
+    // Stop 后不允许重新 Start；Channel 保留到析构，允许同轮残余事件安全返回。
+    void StopAccepting();
     // 须于所属 loop 线程调用，否则抛 std::logic_error。
     // 支持回调内替换或清空，下一条连接生效；对象必须存活至当前事件分发结束。
     void SetAcceptCallback(AcceptCallback cb);
@@ -58,13 +61,20 @@ class Acceptor
   private:
     void HandleRead();
     void DispatchAcceptedFd(int fd);
+    void PauseAccepting();
+    void HandleRetry();
 
   private:
     std::unique_ptr<Socket> _listener; // 对监听套接字进行操作
     EventLoop *_loop;                  // 对监听套接字进行事件监控，不拥有它
     std::unique_ptr<Channel> _channel; // 对监听套接字进行事件管理
     AcceptCallback _accept_callback;   // 设置监听回调函数
-    // 监听 Channel 是否已登记到 Epoller；只有 StartAccepting() 会登记。
-    // 未启动过监听的 Acceptor 析构时不能注销，否则 Epoller 会抛"未登记"异常并终止进程。
+    // 注册状态独立于读监听：退避期间仍登记，但禁读。
+    bool _registered = false;
     bool _accepting = false;
+    bool _stopped = false;
+    // 构造时预先分配，EMFILE 后不再需要申请描述符。
+    int _retry_fd = -1;
+    std::unique_ptr<Channel> _retry_channel;
+    bool _retry_registered = false;
 };

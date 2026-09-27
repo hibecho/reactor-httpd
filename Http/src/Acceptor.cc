@@ -4,9 +4,12 @@
 #include "reactor/EventLoop.hpp"
 #include "tcp/Socket.hpp"
 #include <cassert>
+#include <cerrno>
 #include <exception>
 #include <new>
 #include <stdexcept>
+#include <sys/timerfd.h>
+#include <system_error>
 #include <unistd.h>
 #include <utility>
 
@@ -55,20 +58,108 @@ Acceptor::Acceptor(EventLoop *loop, uint16_t port)
     _channel->SetReadCallback([this] {
         HandleRead();
     });
+
+    _retry_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (_retry_fd < 0)
+        throw std::system_error(errno, std::generic_category(), "Acceptor timerfd_create");
+    try
+    {
+        _retry_channel = std::make_unique<Channel>(_retry_fd, _loop);
+        _retry_channel->SetReadCallback([this] {
+            HandleRetry();
+        });
+    }
+    catch (...)
+    {
+        close(_retry_fd);
+        throw;
+    }
 }
 
 Acceptor::~Acceptor()
 {
     assert(_loop->IsInLoopThread());
-    // 监听 fd 关闭前先注销事件。
-    // 从未 StartAccepting() 的对象没有登记过，注销会抛"未登记"异常并逃出析构函数。
-    if (_accepting)
-        _channel->Remove();
+    StopAccepting();
 }
 
 void Acceptor::StartAccepting()
 {
-    // 注册读事件，允许 EventLoop 调用 HandleRead
+    if (!_loop->IsInLoopThread())
+        throw std::logic_error("Acceptor start requires the loop thread");
+    if (_stopped)
+        throw std::logic_error("Acceptor cannot restart after stop");
+    // 已启动但正在退避时也不可绕过定时恢复。
+    if (_registered)
+        return;
+    _retry_channel->EnableRead();
+    _retry_registered = true;
+    try
+    {
+        _channel->EnableRead();
+        _registered = true;
+        _accepting = true;
+    }
+    catch (...)
+    {
+        _retry_channel->Remove();
+        _retry_registered = false;
+        throw;
+    }
+}
+
+void Acceptor::StopAccepting()
+{
+    if (!_loop->IsInLoopThread())
+        throw std::logic_error("Acceptor stop requires the loop thread");
+    _stopped = true;
+    _accepting = false;
+    if (_registered)
+    {
+        _channel->Remove();
+        _registered = false;
+    }
+    if (_retry_registered)
+    {
+        _retry_channel->Remove();
+        _retry_registered = false;
+    }
+    _listener->Close();
+    if (_retry_fd >= 0)
+    {
+        close(_retry_fd);
+        _retry_fd = -1;
+    }
+}
+
+void Acceptor::PauseAccepting()
+{
+    _channel->DisableRead();
+    _accepting = false;
+    itimerspec delay{};
+    delay.it_value.tv_nsec = 100 * 1000 * 1000; // 100 ms，使用独立的单调时钟。
+    if (timerfd_settime(_retry_fd, 0, &delay, nullptr) < 0)
+    {
+        const int error = errno;
+        StopAccepting();
+        throw std::system_error(error, std::generic_category(), "Acceptor timerfd_settime");
+    }
+}
+
+void Acceptor::HandleRetry()
+{
+    // Stop 可能由同轮排在前面的事件发起；此时 fd 已关闭，不能再读或重新登记。
+    if (_stopped)
+        return;
+    uint64_t expirations = 0;
+    ssize_t count;
+    do
+    {
+        count = read(_retry_fd, &expirations, sizeof(expirations));
+    } while (count < 0 && errno == EINTR);
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return;
+    if (count != static_cast<ssize_t>(sizeof(expirations)))
+        throw std::system_error(count < 0 ? errno : EIO, std::generic_category(), "Acceptor timerfd read");
     _channel->EnableRead();
     _accepting = true;
 }
@@ -81,12 +172,16 @@ int Acceptor::GetListenFd() const noexcept
 void Acceptor::HandleRead()
 {
     assert(_loop->IsInLoopThread());
-    while (true)
+    // LT 会在下一轮继续报告未处理连接；有限预算让停止任务和定时事件得到执行机会。
+    constexpr unsigned kAcceptBudget = 64;
+    for (unsigned accepted = 0; _accepting && accepted < kAcceptBudget; ++accepted)
     {
         const int fd = _listener->Accept();
         if (fd < 0)
         {
-            // Socket 已处理 EINTR 和错误日志；资源耗尽时这里不提供退避。
+            // Socket 已处理 EINTR、保留 errno；资源耗尽时禁读避免 LT 忙轮询。
+            if (errno == EMFILE || errno == ENFILE)
+                PauseAccepting();
             return;
         }
         // 执行_accept_callback回调函数
