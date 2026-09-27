@@ -36,9 +36,15 @@ class LoopThreadPool
     void Create();
     // 启动后分配，返回目标循环。
     EventLoop *NextLoop();
+    // 仅在拥有者保证工作线程尚未停止时使用返回的指针。
+    std::vector<EventLoop *> Loops();
+    void RequestStop();
+    void Join();
+    void Stop();
 
   private:
     /*管理线程分配*/
+    bool _created = false;
     std::size_t _next = 0;                             // 轮转分配需要记录下一个位置
     int _thread_count = 0;                             // 从属线程的数量
     EventLoop *_baseloop;                              // 主EventLoop，运行在主线程
