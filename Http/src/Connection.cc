@@ -4,6 +4,7 @@
 #include "reactor/Channel.hpp"
 #include "reactor/EventLoop.hpp"
 #include "tcp/Socket.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <exception>
@@ -12,19 +13,25 @@
 #include <utility>
 
 Connection::Connection(EventLoop *loop, uint64_t id, int fd)
-    : _conn_id(id)
+    : Connection(loop, id, Socket(fd), nullptr)
+{}
+
+Connection::Connection(EventLoop *loop, uint64_t id, Socket socket, std::shared_ptr<OutputBudget> budget)
+    : _account(std::make_shared<SendAccount>(budget ? std::move(budget) : std::make_shared<OutputBudget>()))
+    , _conn_id(id)
     , _timer_id(id)
-    , _sockfd(fd)
+    , _sockfd(socket.GetFd())
     , _status(ConnStatus::CONNECTING)
     , _loop(loop)
     , enable_inactive_release(false)
-    , _socket(std::make_unique<Socket>(fd))
-    , _channel(std::make_unique<Channel>(fd, loop))
+    , _socket(std::make_unique<Socket>(std::move(socket)))
+    , _channel(std::make_unique<Channel>(_sockfd, loop))
     , _in_buffer(std::make_unique<Buffer>())
     , _out_buffer(std::make_unique<Buffer>())
 {
-    if (!loop || fd < 0)
+    if (!loop || _sockfd < 0)
         throw std::invalid_argument("Connection requires a loop and valid fd");
+    _account->budget->limits.Validate();
     if (!_socket->SetNonBlock())
         throw std::runtime_error("Connection: SetNonBlock failed");
 }
@@ -35,6 +42,7 @@ Connection::~Connection()
     // 所属 EventLoop 必须仍然存活，且析构需发生在所属线程。
     if (_registered)
         _channel->Remove();
+    RefundOutput(_output_reserved);
 }
 
 int Connection::GetFd()
@@ -100,7 +108,7 @@ void Connection::SetAnyEventCallback(AnyEventCallback cb)
 void Connection::Established()
 {
     auto self = shared_from_this();
-    _loop->RunInLoop([self] {
+    Submit([self] {
         self->EstablishedInLoop();
     });
 }
@@ -131,6 +139,15 @@ void Connection::EstablishedInLoop()
     _channel->EnableRead();
     _registered = true;
     _status = ConnStatus::CONNECTED;
+    {
+        std::lock_guard<std::mutex> lock(_account->budget->mutex);
+        _account->send_open = !_account->budget->stopping.load();
+    }
+    if (_account->budget->stopping.load())
+    {
+        ShutDownInLoop();
+        return;
+    }
 
     try
     {
@@ -152,7 +169,7 @@ void Connection::EstablishedInLoop()
 
 void Connection::HandleRead()
 {
-    if (_status != ConnStatus::CONNECTED)
+    if (!CanProcessInput())
         return;
     auto self = shared_from_this();
     char buffer[65536];
@@ -160,7 +177,19 @@ void Connection::HandleRead()
 
     // 在LT模式下，只要缓冲区可读，会一直触发读取事件
     // 无需单向数据读取不完整
-    const ssize_t received = _socket->NonBlockRecv(buffer, sizeof(buffer));
+    const auto available = _in_buffer->GetReadableSize();
+    const auto limit = _account->budget->limits.max_input;
+    if (available >= limit)
+    {
+        // 恰好达到上限可保留；仅有额外字节到达才判超限，且不追加到 Buffer。
+        const ssize_t extra = _socket->Recv(buffer, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (extra > 0 || (extra < 0 && errno != EAGAIN && errno != EWOULDBLOCK))
+            HandleError();
+        else if (extra == 0)
+            ShutDownInLoop();
+        return;
+    }
+    const ssize_t received = _socket->NonBlockRecv(buffer, std::min(sizeof(buffer), limit - available));
 
     // received > 0 :读取成功
     if (received > 0)
@@ -207,27 +236,153 @@ void Connection::HandleRead()
     HandleError();
 }
 
-void Connection::Send(std::string data)
+void Connection::Submit(std::function<void()> task, bool deferred)
 {
-    auto self = shared_from_this();
-    _loop->RunInLoop([self, data = std::move(data)]() mutable {
-        self->SendInLoop(std::move(data));
-    });
+    std::unique_lock<std::mutex> lock(_account->budget->mutex);
+    if (!_account->submit_open)
+        return;
+    if (!deferred && _loop->IsInLoopThread())
+    {
+        lock.unlock();
+        task();
+    }
+    else
+        _loop->QueueInLoopCommitted(std::move(task));
 }
 
-void Connection::SendInLoop(std::string data)
+bool Connection::Send(std::string data)
 {
-    /*防御性编程*/
+    auto self = shared_from_this();
+    // 凭证先于锁声明，异常展开时先解锁再自动归还额度。
+    auto reservation = std::make_shared<SendReservation>(_account);
+    std::unique_lock<std::mutex> lock(_account->budget->mutex);
+    auto &budget = *_account->budget;
+    if (!_account->submit_open || !_account->send_open || budget.stopping.load())
+        return false;
+    if (data.size() > budget.limits.max_output - _account->pending ||
+        data.size() > budget.limits.max_total_output - budget.used)
+    {
+        _loop->QueueInLoopCommitted([self] { self->HandleError(); });
+        _account->send_open = false;
+        return false;
+    }
+    if (data.empty())
+        return true;
+    reservation->bytes = data.size();
+    _account->pending += data.size();
+    budget.used += data.size();
+    if (_loop->IsInLoopThread() && _account->queued_sends == 0)
+    {
+        lock.unlock();
+        try { SendInLoop(std::move(data), reservation); }
+        catch (...)
+        {
+            // Buffer 可能已接管数据；关闭后拒绝重试，避免异常被误当作未接受。
+            HandleError();
+            throw;
+        }
+    }
+    else
+    {
+        _loop->QueueInLoopCommitted([self, data = std::move(data), reservation]() mutable {
+            {
+                std::lock_guard<std::mutex> guard(self->_account->budget->mutex);
+                --self->_account->queued_sends;
+                reservation->queued = false;
+            }
+            try { self->SendInLoop(std::move(data), reservation); }
+            catch (...)
+            {
+                self->HandleError();
+                throw;
+            }
+        });
+        ++_account->queued_sends;
+        reservation->queued = true;
+    }
+    return true;
+}
+
+void Connection::SendInLoop(std::string data, const std::shared_ptr<SendReservation> &reservation)
+{
     assert(_loop->IsInLoopThread());
-    if (_status != ConnStatus::CONNECTED)
+    if (_release_pending || _released)
         return;
-
-    // 1.数据进入输出缓冲区
-    _out_buffer->WriteString(data);
-
-    // 2.开启写监控
+    _out_buffer->Write(data.data(), data.size());
+    {
+        std::lock_guard<std::mutex> lock(_account->budget->mutex);
+        _output_reserved += reservation->bytes;
+        reservation->bytes = 0; // Buffer 接管，不重复计费。
+    }
     if (_out_buffer->GetReadableSize() != 0)
         _channel->EnableWrite();
+    UpdateBackpressure();
+}
+
+std::size_t Connection::PendingOutput() const
+{
+    std::lock_guard<std::mutex> lock(_account->budget->mutex);
+    return _account->pending;
+}
+
+bool Connection::CanProcessInput() const
+{
+    std::lock_guard<std::mutex> lock(_account->budget->mutex);
+    return _status == ConnStatus::CONNECTED && !_read_paused && !_release_pending &&
+           _account->send_open && !_account->budget->stopping.load() &&
+           _account->pending < _account->budget->limits.output_high;
+}
+
+void Connection::RefundOutput(std::size_t bytes)
+{
+    std::lock_guard<std::mutex> lock(_account->budget->mutex);
+    _output_reserved -= bytes;
+    _account->pending -= bytes;
+    _account->budget->used -= bytes;
+}
+
+void Connection::UpdateBackpressure()
+{
+    if (_status != ConnStatus::CONNECTED || _release_pending || _account->budget->stopping.load())
+        return;
+    const auto size = PendingOutput();
+    const auto &limits = _account->budget->limits;
+    if (!_read_paused && size >= limits.output_high)
+    {
+        _read_paused = true;
+        _channel->DisableRead();
+    }
+    else if (_read_paused && size <= limits.output_low && !_resume_pending)
+    {
+        auto self = shared_from_this();
+        _loop->QueueInLoopCommitted([self] { self->ResumeInput(); });
+        _resume_pending = true;
+    }
+}
+
+void Connection::ResumeInput()
+{
+    _resume_pending = false;
+    if (_status != ConnStatus::CONNECTED || _release_pending || _account->budget->stopping.load())
+        return;
+    if (PendingOutput() > _account->budget->limits.output_low)
+        return;
+    _read_paused = false;
+    _channel->EnableRead();
+    auto callback = _message_callback;
+    try
+    {
+        if (callback && _in_buffer->GetReadableSize() != 0)
+            callback(shared_from_this(), _in_buffer.get());
+    }
+    catch (const std::bad_alloc &) { throw; }
+    catch (...) { HandleError(); }
+}
+
+void Connection::ForceClose()
+{
+    auto self = shared_from_this();
+    Submit([self] { self->HandleError(); }, true);
 }
 
 void Connection::HandleWrite()
@@ -269,6 +424,8 @@ void Connection::HandleWrite()
 
         // sent > 0：消费本次成功发送的数据，剩余数据留待后续发送。
         _out_buffer->MoveReadOffset(static_cast<std::size_t>(sent));
+        RefundOutput(static_cast<std::size_t>(sent));
+        UpdateBackpressure();
     }
 
     // 缓冲区无数据，关闭写事件
@@ -279,20 +436,28 @@ void Connection::HandleWrite()
         // - 输出缓冲区为空。
         // - 连接已经请求关闭。
         _channel->DisableWrite();
-        if (_status == ConnStatus::DISCONNETING)
+        if (_status == ConnStatus::DISCONNETING && PendingOutput() == 0)
             HandleClose();
     }
 }
 
 void Connection::ShutDown()
 {
-    // 这里没有立即关闭套接字，而是保证后续操作在连接所属的线程执行：
-    //- 当前就是所属线程：立即执行 ShutDownInLoop()。
-    //- 当前是其他线程：任务进入所属 EventLoop 的队列。
     auto self = shared_from_this();
-    _loop->RunInLoop([self] {
-        self->ShutDownInLoop();
-    });
+    std::unique_lock<std::mutex> lock(_account->budget->mutex);
+    if (!_account->submit_open)
+        return;
+    if (_loop->IsInLoopThread())
+    {
+        _account->send_open = false;
+        lock.unlock();
+        ShutDownInLoop();
+    }
+    else
+    {
+        _loop->QueueInLoopCommitted([self] { self->ShutDownInLoop(); });
+        _account->send_open = false;
+    }
 }
 
 void Connection::ShutDownInLoop()
@@ -304,6 +469,11 @@ void Connection::ShutDownInLoop()
 
     // 1.将状态设置为正在关闭，还没有完成关闭。
     _status = ConnStatus::DISCONNETING;
+    {
+        std::lock_guard<std::mutex> lock(_account->budget->mutex);
+        _account->send_open = false;
+    }
+    CancelInactiveReleaseInLoop();
 
     // 2.取消读事件监控，不再继续读取请求。
     if (_registered)
@@ -311,7 +481,7 @@ void Connection::ShutDownInLoop()
 
     // 3.判断输出缓冲区是否还有数据
     //   如果还有数据需要等待缓冲区数据发送完后，在HandWirte函数接口中进行关闭。
-    if (_out_buffer->GetReadableSize() == 0)
+    if (PendingOutput() == 0)
         HandleClose();
 }
 
@@ -332,12 +502,16 @@ void Connection::HandleError()
     // 1. QueueInLoop 而非 RunInLoop：Channel::Handle 还可能继续分发本轮事件。
     //    延迟实际清理：等本轮事件分发结束，才执行 ReleaseInLoop()。
     auto self = shared_from_this();
-    _loop->QueueInLoop([self] {
+    _loop->QueueInLoopCommitted([self] {
         self->ReleaseInLoop();
     });
 
     // 2. 安排延迟释放
     _release_pending = true;
+    {
+        std::lock_guard<std::mutex> lock(_account->budget->mutex);
+        _account->send_open = false;
+    }
 
     // 3.设置状态为已关闭
     _status = ConnStatus::DISCONNECTED;
@@ -372,6 +546,11 @@ void Connection::ReleaseInLoop()
     // 4.清空输入、输出缓冲区
     _in_buffer->Clear();
     _out_buffer->Clear();
+    RefundOutput(_output_reserved);
+    {
+        std::lock_guard<std::mutex> lock(_account->budget->mutex);
+        _account->submit_open = false;
+    }
 
     // 5.设置 _released = true
     _status = ConnStatus::DISCONNECTED;
@@ -463,7 +642,7 @@ void Connection::EnableInactiveRelease(int timeout)
     // 上面的校验已经排除非正值，这里的转换不会回绕。
     const uint32_t normalized = static_cast<uint32_t>(timeout);
 
-    _loop->RunInLoop([self, normalized] {
+    Submit([self, normalized] {
         self->EnableInactiveReleaseInLoop(normalized);
     });
 }
@@ -472,15 +651,17 @@ void Connection::EnableInactiveReleaseInLoop(uint32_t timeout)
 {
     assert(_loop->IsInLoopThread());
 
-    if (_release_pending || _released)
+    if (_release_pending || _released || _status == ConnStatus::DISCONNETING ||
+        _account->budget->stopping.load())
         return;
 
     std::weak_ptr<Connection> weak = shared_from_this();
 
     _loop->TimerAdd(_timer_id, timeout, [weak]() noexcept {
         ConnectionPtr conn = weak.lock();
-        if (!conn)
-            return; // 连接对象已经不存在。
+        if (!conn || conn->_account->budget->stopping.load() ||
+            conn->_status == ConnStatus::DISCONNETING)
+            return; // 已停止接纳/进入排空时，旧空闲超时不得提前强关。
         try
         {
             // 超时了：安排延迟释放，不再等待输出发送完。
@@ -501,7 +682,7 @@ void Connection::EnableInactiveReleaseInLoop(uint32_t timeout)
 void Connection::CancelInactiveRelease()
 {
     auto self = shared_from_this();
-    _loop->RunInLoop([self] {
+    Submit([self] {
         self->CancelInactiveReleaseInLoop();
     });
 }
@@ -522,7 +703,7 @@ void Connection::SwitchProtocol(std::any context, ConnectedCallback conn, Messag
 {
     auto self = shared_from_this();
     // 任务自己拥有参数，调用方的局部变量和临时对象可以先销毁。
-    _loop->RunInLoop([self, context = std::move(context), conn = std::move(conn), msg = std::move(msg),
+    Submit([self, context = std::move(context), conn = std::move(conn), msg = std::move(msg),
                       closed = std::move(closed), event = std::move(event)]() mutable {
         self->SwitchProtocolInLoop(std::move(context), std::move(conn), std::move(msg), std::move(closed),
                                    std::move(event));

@@ -32,6 +32,7 @@
  */
 
 #pragma once
+#include "tcp/ResourceLimits.hpp"
 #include <any>
 #include <functional>
 #include <memory>
@@ -69,6 +70,8 @@ class Connection : public std::enable_shared_from_this<Connection>
   public:
     // 接管 fd；loop 必须比本对象活得更久。已启动连接必须由服务器持有到关闭通知。
     Connection(EventLoop *loop, uint64_t id, int fd);
+    // 按值接管 Socket，make_shared 分配失败时调用方仍拥有描述符。
+    Connection(EventLoop *loop, uint64_t id, Socket socket, std::shared_ptr<OutputBudget> budget);
     ~Connection();
     Connection(const Connection &) = delete;
     Connection &operator=(const Connection &) = delete;
@@ -101,7 +104,14 @@ class Connection : public std::enable_shared_from_this<Connection>
     // 连接就绪后，进行Channel回调设置
     void Established();
     // 发送数据，将数据发送到缓冲区，开启事件监控
-    void Send(std::string data);
+    // true 表示整体接受，不保证对端收到；false 表示关闭/停机/额度不足。
+    // 额度不足会安排强关；提交前分配失败抛异常，提交后唤醒失败不改变结果。
+    // 同线程追加/注册写事件失败时先安排关闭再抛出，不能在该连接重试。
+    bool Send(std::string data);
+    void ForceClose();
+    // 所属循环调用，供协议层在每次解析前检查背压和停机。
+    bool CanProcessInput() const;
+    std::size_t PendingOutput() const;
     // 对外提供关闭接口，把操作交给所属 EventLoop
     void ShutDown();
     // 对外接口，可能在任意线程被调用;
@@ -127,7 +137,11 @@ class Connection : public std::enable_shared_from_this<Connection>
     void HandleError();
     void HandleEvent();
 
-    void SendInLoop(std::string data);
+    void SendInLoop(std::string data, const std::shared_ptr<SendReservation> &reservation);
+    void Submit(std::function<void()> task, bool deferred = false);
+    void UpdateBackpressure();
+    void ResumeInput();
+    void RefundOutput(std::size_t bytes);
     void ReleaseInLoop();
     void EstablishedInLoop();
     void ShutDownInLoop();
@@ -137,6 +151,10 @@ class Connection : public std::enable_shared_from_this<Connection>
                               AnyEventCallback event);
 
   private:
+    std::shared_ptr<SendAccount> _account;
+    std::size_t _output_reserved = 0;
+    bool _read_paused = false;
+    bool _resume_pending = false;
     /*Connection模块的基础属性*/
     uint64_t _conn_id;             // 连接的唯一ID值，便于连接的管理和查找
     uint64_t _timer_id;            // 复用_conn_id作为唯一的定时器ID
