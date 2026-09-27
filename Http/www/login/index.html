@@ -1,0 +1,1060 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>沿着海风，慢慢骑 · 海岸慢行</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #2d493e;
+      --paper: #f8f6ee;
+      --muted: #798477;
+      --line: #dce0d3;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family:
+        system-ui,
+        -apple-system,
+        "Segoe UI",
+        sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    a {
+      color: inherit;
+      text-underline-offset: 5px;
+    }
+
+    :focus-visible {
+      outline: 3px solid #bd744b;
+      outline-offset: 4px;
+    }
+
+    .shell {
+      max-width: 1440px;
+      margin: auto;
+      padding: 0 5%;
+    }
+
+    header {
+      height: 88px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 2px;
+    }
+
+    .brand svg {
+      width: 35px;
+      height: 35px;
+    }
+
+    .eyebrow {
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: var(--muted);
+    }
+
+    header a {
+      font-size: 12px;
+      text-decoration: none;
+    }
+
+    .intro {
+      text-align: center;
+      padding: 48px 0 32px;
+    }
+
+    .intro h1 {
+      font:
+        500 clamp(32px, 4.5vw, 60px) Georgia,
+        "Noto Serif SC",
+        serif;
+      letter-spacing: 4px;
+      margin: 17px 0;
+    }
+
+    .intro p {
+      font-size: 13px;
+      letter-spacing: 2px;
+      color: var(--muted);
+      line-height: 1.9;
+      margin: 0;
+    }
+
+    .scene {
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid #d3dfd4;
+      --sky: #d7ebe6;
+      --sea: #94c5ba;
+      --hill: #91b09b;
+      --cloud: #fffcf0;
+      --grass: #b9caa0;
+      --road: #e7d9b7;
+    }
+
+    .scene[data-weather="rain"] {
+      --sky: #afc6cb;
+      --sea: #799fa6;
+      --hill: #849c98;
+      --cloud: #d5e0df;
+      --grass: #9db4a0;
+      --road: #c3c4b4;
+    }
+
+    .scene[data-weather="snow"] {
+      --sky: #dce6eb;
+      --sea: #aac4ce;
+      --hill: #b5c8c4;
+      --cloud: #f6f8f3;
+      --grass: #e3eae1;
+      --road: #d4dddb;
+    }
+
+    .landscape {
+      width: 100%;
+      height: auto;
+      display: block;
+      aspect-ratio: 1200/540;
+    }
+
+    .sky {
+      fill: var(--sky);
+    }
+
+    .sea {
+      fill: var(--sea);
+    }
+
+    .hill {
+      fill: var(--hill);
+    }
+
+    .cloud {
+      fill: var(--cloud);
+    }
+
+    .grass {
+      fill: var(--grass);
+    }
+
+    .road {
+      fill: var(--road);
+    }
+
+    .sky,
+    .sea,
+    .hill,
+    .cloud,
+    .grass,
+    .road {
+      transition: fill 2s;
+    }
+
+    .scene-label,
+    .weather-label {
+      position: absolute;
+      top: 24px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: #526e60;
+    }
+
+    .scene-label {
+      left: 28px;
+    }
+
+    .scene-label::before {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #547b60;
+      margin-right: 9px;
+    }
+
+    .weather-label {
+      right: 28px;
+    }
+
+    .sun {
+      opacity: 1;
+      transition: opacity 2s;
+    }
+
+    .scene:not([data-weather="sun"]) .sun {
+      opacity: 0;
+    }
+
+    .rain-layer,
+    .snow-layer {
+      opacity: 0;
+      transition: opacity 1.5s;
+      pointer-events: none;
+    }
+
+    .scene[data-weather="rain"] .rain-layer,
+    .scene[data-weather="snow"] .snow-layer {
+      opacity: 1;
+    }
+
+    .cloud-drift {
+      animation: drift 28s ease-in-out infinite alternate;
+    }
+
+    .cloud-drift.second {
+      animation-duration: 37s;
+      animation-direction: alternate-reverse;
+    }
+
+    .scenery {
+      animation: land 35s linear infinite;
+    }
+
+    .road-lines {
+      animation: land 6s linear infinite;
+    }
+
+    .wheel {
+      animation: spin 1.35s linear infinite;
+    }
+
+    .scarf {
+      animation: flutter 0.7s ease-in-out infinite alternate;
+      transform-origin: 592px 230px;
+    }
+
+    /* 链节随齿盘前进：位移 119 恰是齿盘周长（半径 19），
+       又整除 stroke-dasharray 的周期 7 + 10，循环处严丝合缝；
+       周期与 .wheel 同为 1.35s，所以链条和齿盘是同一个转速。 */
+    #chain-links {
+      animation: chain 1.35s linear infinite;
+    }
+
+    .rain-far-move {
+      animation: rain-far 10.2s linear infinite;
+    }
+
+    .rain-near-move {
+      animation: rain-near 2.4s linear infinite;
+    }
+
+    /* 雨点水圈：从中心放大并淡出，靠 animation-delay 错开。 */
+    .ripple {
+      fill: none;
+      stroke: #f2f9f3;
+      stroke-width: 1.4;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: ripple 2.4s ease-out infinite;
+    }
+
+    .snow-move {
+      animation: snow 12s linear infinite;
+    }
+
+    .leg {
+      fill: none;
+      stroke: #d6a05b;
+      stroke-width: 8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .far-leg {
+      stroke: #ad854f;
+    }
+
+    .paused * {
+      animation-play-state: paused !important;
+    }
+
+    .reduced * {
+      animation: none !important;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes flutter {
+      to {
+        transform: rotate(-9deg);
+      }
+    }
+
+    @keyframes drift {
+      to {
+        transform: translateX(65px);
+      }
+    }
+
+    @keyframes land {
+      to {
+        transform: translateX(-1200px);
+      }
+    }
+
+    @keyframes chain {
+      to {
+        stroke-dashoffset: -119;
+      }
+    }
+
+    /* 雨雪幕的位移必须是平铺单元宽高的整数倍，否则每循环一次会横向跳一下。
+       远层 140x120 对 (-140,360)，近层 70x60 对 (-70,180)，雪 130x100 对 (-130,400)，
+       两个方向都除得尽；雨的两层倾角都取 atan(140/360)=21.25 度。 */
+    @keyframes rain-far {
+      to {
+        transform: translate(-140px, 360px);
+      }
+    }
+
+    @keyframes rain-near {
+      to {
+        transform: translate(-70px, 180px);
+      }
+    }
+
+    @keyframes ripple {
+      from {
+        transform: scale(0.3);
+        opacity: 0.75;
+      }
+      to {
+        transform: scale(1.6);
+        opacity: 0;
+      }
+    }
+
+    @keyframes snow {
+      to {
+        transform: translate(-130px, 400px);
+      }
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .weather-picker {
+      display: flex;
+      gap: 4px;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 30px;
+    }
+
+    .weather-picker button {
+      border: 0;
+      background: transparent;
+      color: #6b7b70;
+      padding: 10px 17px;
+      border-radius: 22px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .weather-picker button[aria-pressed="true"] {
+      background: #304e43;
+      color: white;
+    }
+
+    .weather-picker svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+    }
+
+    .play-controls {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .auto-label {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .auto-label input {
+      accent-color: #315650;
+      vertical-align: middle;
+    }
+
+    .pause-button {
+      border: 1px solid #cbd3c5;
+      border-radius: 50%;
+      width: 39px;
+      height: 39px;
+      background: transparent;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .pause-button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .caption {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 1px;
+    }
+
+    .caption strong {
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 20px 0 28px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 2px;
+    }
+
+    @media (max-width: 700px) {
+      header {
+        height: 72px;
+      }
+
+      .intro {
+        padding: 36px 0 26px;
+      }
+
+      .intro h1 {
+        letter-spacing: 2px;
+      }
+
+      .intro p {
+        font-size: 11px;
+        letter-spacing: 1px;
+      }
+
+      .landscape {
+        height: 390px;
+        aspect-ratio: auto;
+      }
+
+      .scene-label {
+        left: 16px;
+        top: 17px;
+        font-size: 8px;
+      }
+
+      .weather-label {
+        right: 16px;
+        top: 17px;
+        font-size: 8px;
+      }
+
+      .controls {
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .caption {
+        width: 100%;
+        order: 3;
+        text-align: center;
+      }
+
+      .weather-picker button {
+        padding: 9px 12px;
+      }
+
+      .play-controls {
+        gap: 8px;
+      }
+
+      footer {
+        font-size: 8px;
+        letter-spacing: 1px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .scene * {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="19" fill="#e9eddf" />
+          <path d="M11 29c-3-7 1-13 7-12 3 1 3 5 3 5V13c0-6 8-7 9-2l-1 5h-5v9c-1 7-9 10-13 4" fill="#fffdf4"
+            stroke="#36574b" stroke-width="1.4" />
+          <path d="m28 12 10 3-10 3" fill="#e7b665" stroke="#36574b" stroke-width="1.2" />
+          <circle cx="27" cy="11" r="1" />
+        </svg>海岸慢行
+      </div>
+    </header>
+    <main>
+      <section class="intro" aria-labelledby="cover-title">
+        <h1 id="cover-title">沿着海风，慢慢骑</h1>
+        <p>晴也好，雨也好。和一只鹈鹕，把日子骑成风景。</p>
+      </section>
+      <section id="scene" class="scene" data-weather="sun" aria-label="鹈鹕骑行的海滨动画">
+        <div class="scene-label">海岸线</div>
+        <div class="weather-label" id="weather-label">晴天 · 海风轻拂</div>
+        <svg class="landscape" viewBox="0 0 1200 540" preserveAspectRatio="xMidYMid slice" role="img"
+          aria-labelledby="scene-title scene-desc">
+          <title id="scene-title">骑自行车的鹈鹕</title>
+          <desc id="scene-desc">
+            一只戴绿色围巾的白色鹈鹕骑着薄荷色自行车经过海滨公路，远处有山丘、灯塔和帆船。天气在晴、雨、雪之间变化。
+          </desc>
+          <defs>
+            <pattern id="sea-lines" width="160" height="32" patternUnits="userSpaceOnUse">
+              <path d="M10 18h35m64-8h24" stroke="#edf4e4" stroke-width="2" opacity=".45" stroke-linecap="round" />
+            </pattern>
+            <!-- 雨分远近两层。单元里的雨丝长短、粗细、深浅都不相同，
+                 且都取 (-7,18) 的斜率，与各自的位移方向一致。
+                 雨丝两端都留在单元内，避免被平铺边界切断。 -->
+            <pattern id="rain-far" width="140" height="120" patternUnits="userSpaceOnUse">
+              <g stroke="#edf5ee" stroke-linecap="round">
+                <path d="m20 12-9.3 24" stroke-width="1" opacity=".28" />
+                <path d="m76 8-11.7 30" stroke-width="1.2" opacity=".36" />
+                <path d="m124 46-7.8 20" stroke-width="1" opacity=".26" />
+                <path d="m50 70-10.1 26" stroke-width="1.1" opacity=".32" />
+                <path d="m16 92-8.6 22" stroke-width="1.2" opacity=".34" />
+                <path d="m138 98-7 18" stroke-width="1" opacity=".28" />
+              </g>
+            </pattern>
+            <pattern id="rain-near" width="70" height="60" patternUnits="userSpaceOnUse">
+              <g stroke="#f4faf5" stroke-linecap="round">
+                <path d="m12 6-9.3 24" stroke-width="2" opacity=".58" />
+                <path d="m52 12-10.9 28" stroke-width="1.8" opacity=".5" />
+                <path d="m34 32-8.6 22" stroke-width="2.2" opacity=".64" />
+              </g>
+            </pattern>
+            <pattern id="snow" width="130" height="100" patternUnits="userSpaceOnUse">
+              <g fill="#fffdf5">
+                <circle cx="15" cy="16" r="3" />
+                <circle cx="80" cy="43" r="2" />
+                <circle cx="47" cy="84" r="3.5" />
+                <circle cx="115" cy="94" r="2" />
+              </g>
+            </pattern>
+            <g id="cloud-shape">
+              <path d="M0 23C-8 6 15-3 27 9 30-14 65-14 70 8 91 2 108 17 101 27H3Z" />
+            </g>
+            <!-- 轮胎与辐条分层；轮毂位置由外层 translate 固定。 -->
+            <g id="wheel-art">
+              <circle r="65" fill="#f7f1dc" fill-opacity=".16" stroke="#304a43" stroke-width="8" />
+              <circle r="59" fill="none" stroke="#e8dbb6" stroke-width="4" />
+              <circle r="55" fill="none" stroke="#799183" stroke-width="1.5" />
+              <g stroke="#668579" stroke-width="1.25" opacity=".8">
+                <path
+                  d="M-54 0H54M0-54V54M-38-38l76 76M-38 38l76-76M-50-21 50 21M-21-50 21 50M-50 21 50-21M-21 50 21-50" />
+              </g>
+              <path d="M0-59v6" stroke="#304a43" stroke-width="3" />
+              <path d="M35 35l5 5" stroke="#e8b765" stroke-width="4" stroke-linecap="round" />
+              <circle r="8" fill="#f2e7c7" stroke="#456757" stroke-width="2" />
+              <circle r="3" fill="#456757" />
+            </g>
+            <!-- 蹼足落在水平脚踏上，整体平移到曲柄端点。 -->
+            <g id="webbed-foot" stroke-linejoin="round" stroke-linecap="round">
+              <path d="M-12-10Q-7-16-2-9L5-5 17-2Q22 1 15 2H-14Q-16-3-12-10Z" fill="currentColor" stroke="#9c743e"
+                stroke-width="1.5" />
+              <path d="M-5-7 4 0M-4-7 12 0" fill="none" stroke="#ac7c3e" stroke-width="1.2" />
+              <rect x="-17" y="2" width="36" height="5" rx="2.5" fill="#34564a" stroke="#34564a" stroke-width="1" />
+              <path d="M-9 5H8" stroke="#c9d7b8" stroke-width="1" />
+            </g>
+            <g id="road-tile">
+              <path d="M30 478h82m153 0h82m153 0h82m153 0h82m153 0h82" stroke="#fff9df" stroke-width="4"
+                stroke-linecap="round" />
+              <g stroke="#7f9b69" stroke-width="2" fill="none">
+                <path d="m115 411-4-13m4 13 8-10m269 18-3-15m3 15 7-9m563 17 3-15m-3 15-7-8" />
+              </g>
+              <g fill="#d9bc6e">
+                <ellipse cx="50" cy="516" rx="4" ry="2" />
+                <ellipse cx="690" cy="523" rx="6" ry="2" />
+                <ellipse cx="1070" cy="511" rx="5" ry="2" />
+              </g>
+            </g>
+            <g id="land-tile">
+              <path class="hill"
+                d="M0 293Q95 245 186 276Q280 302 373 263Q460 230 570 290Q680 318 808 265Q930 224 1030 281Q1120 310 1200 293V324H0Z" />
+              <g transform="translate(955 176)">
+                <path d="m-18 129 6-90h25l9 90" fill="#faf3da" stroke="#7c9380" stroke-width="2" />
+                <path d="m-14 82 29 0 3 20h-33" fill="#d79577" />
+                <path d="M-16 38h34V19h-34Z" fill="#f5d695" stroke="#5c7569" stroke-width="2" />
+                <path d="m-23 19 24-17 24 17Z" fill="#546f60" />
+                <path d="M0 21v16M-22 40h46" stroke="#5c7569" stroke-width="3" />
+                <path d="M-4 119v-15q5-6 10 0v15" fill="#526e63" />
+              </g>
+              <g transform="translate(155 309)">
+                <path d="M0 17h52l-10 9H9Z" fill="#587e72" />
+                <path d="M25-34v49H0Z" fill="#fff8df" />
+                <path d="m29-24 19 38H29Z" fill="#e6c895" />
+              </g>
+            </g>
+            <!-- 只给握把接触处用的柔和阴影，不套在整组上，包握描边保持锐利。 -->
+            <filter id="grasp-blur" x="-90%" y="-90%" width="280%" height="280%" color-interpolation-filters="sRGB">
+              <feGaussianBlur stdDeviation="1.3" />
+            </filter>
+          </defs>
+          <path class="sky" d="M0 0h1200v540H0z" />
+          <g class="sun">
+            <circle cx="866" cy="111" r="55" fill="#f3dfac" opacity=".4" />
+            <circle cx="866" cy="111" r="36" fill="#f7d787" />
+          </g>
+          <g class="cloud cloud-drift" opacity=".8">
+            <use href="#cloud-shape" transform="translate(170 104) scale(1.3)" />
+            <use href="#cloud-shape" transform="translate(660 61) scale(.7)" />
+          </g>
+          <g class="cloud cloud-drift second" opacity=".7">
+            <use href="#cloud-shape" transform="translate(397 157) scale(.85)" />
+            <use href="#cloud-shape" transform="translate(1024 151)" />
+          </g>
+          <path fill="#afc8b7" opacity=".5" d="M0 290Q90 211 218 250T452 248Q563 185 725 268T998 232T1200 250V337H0Z" />
+          <path class="sea" d="M0 296h1200v112H0z" />
+          <g class="scenery">
+            <use href="#land-tile" />
+            <use href="#land-tile" x="1200" />
+          </g>
+          <path fill="url(#sea-lines)" d="M0 328h1200v80H0z" />
+          <path class="grass" d="M0 390q190-18 370 6t410-1 420-3v148H0Z" />
+          <path class="road" d="M0 428q270 7 530 0t670 0v69q-300-7-640 2t-560 0Z" />
+          <g class="road-lines">
+            <use href="#road-tile" />
+            <use href="#road-tile" x="1200" />
+          </g>
+          <!-- 雨天的地面：几处积水反光与水圈。画在路面之后、远层雨幕之前，
+               所以水在地上而不在车前。 -->
+          <g class="rain-layer">
+            <g fill="#dfe9e2">
+              <ellipse cx="238" cy="468" rx="88" ry="5" opacity=".34" />
+              <ellipse cx="706" cy="492" rx="106" ry="6" opacity=".28" />
+              <ellipse cx="1014" cy="464" rx="74" ry="4.5" opacity=".32" />
+              <ellipse cx="430" cy="512" rx="62" ry="4" opacity=".24" />
+            </g>
+            <g>
+              <ellipse class="ripple" cx="252" cy="486" rx="7" ry="2.6" />
+              <ellipse class="ripple" cx="592" cy="504" rx="6" ry="2.2" style="animation-delay:-.6s" />
+              <ellipse class="ripple" cx="880" cy="474" rx="7.5" ry="2.8" style="animation-delay:-1.2s" />
+              <ellipse class="ripple" cx="1082" cy="498" rx="6" ry="2.3" style="animation-delay:-1.8s" />
+              <ellipse class="ripple" cx="146" cy="512" rx="5.5" ry="2.1" style="animation-delay:-.9s" />
+            </g>
+          </g>
+          <!-- 远处雨幕：落在山、海与路面上，但被车与人挡住，于是雨有了前后。 -->
+          <g id="rain-layer-far" class="rain-layer">
+            <g class="rain-far-move">
+              <path d="M-400-600H1600V1000H-400Z" fill="url(#rain-far)" />
+            </g>
+          </g>
+          <ellipse cx="603" cy="450" rx="164" ry="10" fill="#54745a" opacity=".16" />
+          <!-- 先画车轮与远侧腿，再画车架和近侧腿，保持遮挡关系。 -->
+          <g id="bicycle-wheels">
+            <g transform="translate(484 384)">
+              <g class="wheel">
+                <use href="#wheel-art" />
+              </g>
+            </g>
+            <g transform="translate(718 384)">
+              <g class="wheel">
+                <use href="#wheel-art" />
+              </g>
+            </g>
+          </g>
+          <g id="far-limb">
+            <!-- 远侧曲柄臂在车的另一侧，理应被齿盘挡住，所以画在齿盘之前。 -->
+            <g id="crank-far" transform="rotate(45 600 384)">
+              <path d="M600 384 575 384" fill="none" stroke="#3e6251" stroke-width="5.5"
+                stroke-linecap="round" />
+            </g>
+            <path id="far-leg" class="leg far-leg" d="M551 292 592 330 576 356" />
+            <g id="far-foot" transform="translate(582 366)" color="#c08e51">
+              <use href="#webbed-foot" />
+            </g>
+          </g>
+          <g id="bicycle" fill="none" stroke-linejoin="round" stroke-linecap="round">
+            <!-- 挡泥板和支架围绕轮轴，而不是悬在轮胎上方。 -->
+            <path d="M413 382A71 71 0 0 1 548 353M653 355A71 71 0 0 1 789 382" stroke="#5d7966" stroke-width="6" />
+            <path d="M413 382A71 71 0 0 1 548 353M653 355A71 71 0 0 1 789 382" stroke="#eadbb7" stroke-width="3.5" />
+            <path d="m484 384-44-49m44 49 13-69m221 69-12-69m12 69 49-51" stroke="#889d83" stroke-width="1.5" />
+            <!-- 后三角：后轴—座管—中轴；前三角：座管—头管—中轴。 -->
+            <path d="M484 384 558 311 600 384ZM558 311 666 300 675 327 600 384" stroke="#355d4e" stroke-width="9" />
+            <path d="M484 384 558 311 600 384ZM558 311 666 300 675 327 600 384" stroke="#8fbba0" stroke-width="5" />
+            <path d="M563 311 660 301M492 381 552 322" stroke="#d3e2bf" stroke-width="1.5" />
+            <!-- 前叉从头管末端起，不再插进头管中段。 -->
+            <path d="M674 323 685 346Q695 371 718 384" stroke="#355d4e" stroke-width="9" />
+            <path d="M674 323 685 346Q695 371 718 384" stroke="#9ac4a8" stroke-width="4.5" />
+            <!-- 前叉肩：短一段，只把前叉与头管的交界收干净，不外扩成凸块。 -->
+            <path d="M668.5 325.6 678.5 322.1" stroke="#355d4e" stroke-width="8" />
+            <path d="M668.5 325.6 678.5 322.1" stroke="#8fbba0" stroke-width="4" />
+            <path d="m558 311-7-20" stroke="#547566" stroke-width="6" />
+            <path d="M529 290Q544 285 555 288L572 290Q581 294 570 298H533Q525 298 529 290Z" fill="#98734e"
+              stroke="#5d5a40" stroke-width="2" />
+            <path d="M534 290h16" stroke="#d2aa78" stroke-width="2" />
+            <!-- 把立与车把拆开：把立自头管顶向上直达车把，不再先折向左上钻进翅膀。
+                 车把横段与右端弯折的坐标保持不变。 -->
+            <path id="handlebar-stem" d="M666 300Q666 280 669 266Q671.5 256 677 251" stroke="#46665a"
+              stroke-width="6" />
+            <path id="handlebar" d="M677 251 694 250Q706 250 706 261" stroke="#46665a" stroke-width="6" />
+            <path d="M696 257Q657 270 685 340" stroke="#567868" stroke-width="1.5" />
+            <path d="M484 374 596 366A19 19 0 1 1 596 402L484 394A10 10 0 0 1 484 374Z" stroke="#527364"
+              stroke-width="3" />
+            <path id="chain-links" d="M484 374 596 366A19 19 0 1 1 596 402L484 394A10 10 0 0 1 484 374Z"
+              stroke="#c1cfab" stroke-width="1" stroke-dasharray="7 10" />
+            <!-- 齿盘随曲柄同角度转动。纯正圆转与不转在视觉上没有区别，
+                 所以盘面必须有非旋转对称的细节：五根盘爪加五颗盘钉。 -->
+            <g id="chainring" transform="rotate(45 600 384)">
+              <circle cx="600" cy="384" r="17" fill="#e6d4a5" stroke="#547362" stroke-width="2.2" />
+              <g fill="none" stroke="#c9bb92" stroke-width="3.4" stroke-linecap="round">
+                <path d="M600 379 600 370.5" />
+                <path d="M604.76 382.46 612.84 379.83" />
+                <path d="M602.94 388.05 607.94 394.92" />
+                <path d="M597.06 388.05 592.06 394.92" />
+                <path d="M595.24 382.46 587.16 379.83" />
+              </g>
+              <circle cx="600" cy="384" r="5" fill="none" stroke="#a5ac82" stroke-width="1.4" />
+              <g fill="#8a9c79" stroke="#5f7561" stroke-width="0.8">
+                <circle cx="600" cy="370.5" r="2.2" />
+                <circle cx="612.84" cy="379.83" r="2.2" />
+                <circle cx="607.94" cy="394.92" r="2.2" />
+                <circle cx="592.06" cy="394.92" r="2.2" />
+                <circle cx="587.16" cy="379.83" r="2.2" />
+              </g>
+            </g>
+            <circle cx="484" cy="384" r="6" fill="#e2d4ad" stroke="#4c6c5b" stroke-width="2" />
+            <circle cx="718" cy="384" r="5" fill="#e2d4ad" stroke="#4c6c5b" stroke-width="2" />
+          </g>
+          <g id="rider-body" class="rider" stroke-linecap="round" stroke-linejoin="round">
+            <!-- 饱满的躯干落在车座上，颈部形成鹈鹕特有的弯曲轮廓。 -->
+            <path d="M513 248Q488 239 470 245L488 256 473 263Q493 279 522 273Z" fill="#e2e7d6" stroke="#587463"
+              stroke-width="2.5" />
+            <path d="m488 251 22 11m-18 0 17 6" fill="none" stroke="#a6b69a" stroke-width="1.5" />
+            <path
+              d="M503 244C481 263 500 286 524 293C550 304 582 294 596 273C609 255 606 236 615 220C623 207 637 205 643 190C654 164 643 145 624 144C603 143 591 159 593 179C596 200 592 216 580 229C561 243 526 229 503 244Z"
+              fill="#fffbee" stroke="#506e5e" stroke-width="2.8" />
+            <path d="M507 278Q546 303 578 278Q599 259 598 239Q607 217 617 212" fill="none" stroke="#dbe2cc"
+              stroke-width="8" />
+            <path d="M599 167Q602 151 618 149" fill="none" stroke="#ffffff" stroke-width="4" />
+            <path d="m609 146-9-8q12-2 21 7" fill="#f4f3df" stroke="#879c81" stroke-width="1.5" />
+            <!-- 长嘴、宽喉囊和细嘴缝，让轮廓区别于普通鸭子。 -->
+            <path d="M639 177 746 185Q737 218 697 221Q660 223 640 196Z" fill="#e7b568" stroke="#94764b"
+              stroke-width="2.3" />
+            <path d="M645 194Q678 217 714 211" fill="none" stroke="#f2cf8e" stroke-width="4" />
+            <path d="M640 174 752 183 746 192 640 190Z" fill="#f1cd85" stroke="#94764b" stroke-width="2" />
+            <path d="M645 183 741 187" stroke="#c19450" stroke-width="1.3" />
+            <path d="m749 184 3 0-6 8" fill="#bb8a4d" />
+            <ellipse cx="630" cy="175" rx="10" ry="12" fill="#edf0de" />
+            <circle cx="631" cy="172" r="4.6" fill="#304c3f" />
+            <circle cx="632.5" cy="170.5" r="1.6" fill="white" />
+            <path d="M624 160q6-3 11 1" fill="none" stroke="#66836b" stroke-width="1.8" />
+            <ellipse cx="631" cy="190" rx="6" ry="3.5" fill="#edc9a1" opacity=".65" />
+            <!-- 围巾结和两条飘带。 -->
+            <path class="scarf" d="M593 231Q572 250 533 229L517 230 526 243Q563 261 598 241Z" fill="#518671"
+              stroke="#3d6c57" stroke-width="1.4" />
+            <path d="M590 223 610 231 603 244 582 235Z" fill="#4d826b" stroke="#3d6c57" stroke-width="1.5" />
+            <path d="m590 228 13 5" stroke="#97b797" stroke-width="2" />
+            <!-- 翼根随身体起伏，末端收窄成尖，塞进固定的包握轮廓之下。 -->
+            <path id="rider-wing"
+              d="M546 246C568 234 588 249 610 262Q638 276 667 249Q674 244 680 246Q684 249 681.5 255Q678 261 671 265Q644 281 606 282Q578 284 553 270Z"
+              fill="#f5f3e1" stroke="#5e7e67" stroke-width="2.3" />
+            <path id="wing-feathers" d="M554 255Q574 267 598 271M552 262Q571 279 594 279M609 274Q641 285 674 257"
+              fill="none" stroke="#c2ceb3" stroke-width="2" />
+          </g>
+          <!-- 固定握持组：一条连续包握轮廓扣住握把中段，两端握把外露。 -->
+          <g id="handle-grasp" transform="translate(680 250)" stroke-linecap="round" stroke-linejoin="round">
+            <!-- 远侧那只手：轮廓是近侧包握的小一号回声，画在握把套之前，
+                 于是握把套与近侧包握会盖住它的下半部分，只在握把上方露出上缘与右端的一小截，
+                 读作另一只手在车把后面扶着。 -->
+            <path id="grasp-far-hand"
+              d="M-3.92-9.29C0.76-11.08 6.22-11.55 10.9-10.3C15.19-8.9 17.92-5.94 17.61-2.5C17.3 0.3 13.63 1.4 10.12 0.69C7.16 0.15 5.05-1.1 4.27-3.05C2.71-4.61-0.41-5.39-3.14-6.56C-4.7-7.34-5.09-8.51-3.92-9.29Z"
+              fill="#ece7d2" stroke="#5e7e67" stroke-width="1.2" />
+            <path d="M5.6-10.4Q7.4-7.2 7.6-4.4" fill="none" stroke="#8ba48d" stroke-width="0.9"
+              stroke-linecap="butt" />
+            <!-- 棕色握把套，顺着车把走，两端各留出一段可见长度。 -->
+            <path id="handle-grip" d="M-12 1.6L14 0L20 0.9" fill="none" stroke="#9a7750" stroke-width="7" />
+            <path d="M-9 0.2L17-0.5" fill="none" stroke="#d0a775" stroke-width="1.4" />
+            <!-- 只在包握压住握把的接触边上加柔和阴影。 -->
+            <path d="M9 8.8C4 8.2 0 6.8-3 3.8" fill="none" stroke="#3f6152" stroke-width="3.5" opacity=".2"
+              filter="url(#grasp-blur)" />
+            <path d="M-13.6-1.6Q-14.4-3-13.4-4.4" fill="none" stroke="#3f6152" stroke-width="3" opacity=".16"
+              filter="url(#grasp-blur)" />
+            <!-- 包握主体：单一连续轮廓。左端从翅膀方向收成细尖，贴着握把上缘铺开，
+                   包过右端后由右下的小羽尖回扣收口。 -->
+            <path id="grasp-wrap"
+              d="M-14-5.5C-8-7.8-1-8.4 5-6.8C10.5-5 14-1.2 13.6 3.2C13.2 6.8 8.5 8.2 4 7.3C0.2 6.6-2.5 5-3.5 2.5C-5.5 0.5-9.5-0.5-13-2C-15-3-15.5-4.5-14-5.5Z"
+              fill="#fffbed" stroke="#5e7e67" stroke-width="1.3" />
+            <!-- 两条短浅分界线，代替原来的三根独立"手指"。 -->
+            <g id="grasp-dividers" fill="none" stroke="#8ba48d" stroke-width="0.9" stroke-linecap="butt">
+              <path d="M1-7Q1.9-2.2 2.2 3.6" />
+              <path d="M6.2-6Q7.2-1.6 7.4 4.4" />
+            </g>
+          </g>
+          <!-- 近侧曲柄臂在齿盘之前。两臂分成两个组，才能各自处在齿盘的正确一侧。 -->
+          <g id="crank-near" transform="rotate(45 600 384)">
+            <path d="M600 384 625 384" fill="none" stroke="#3e6251" stroke-width="5.5"
+              stroke-linecap="round" />
+          </g>
+          <path id="near-leg" class="leg" d="M560 292 622 317 612 392" />
+          <g id="near-foot" transform="translate(618 402)" color="#e4ad61">
+            <use href="#webbed-foot" />
+          </g>
+          <circle cx="600" cy="384" r="5" fill="#e9d8ad" stroke="#456553" stroke-width="2" />
+          <!-- 近处雨幕：盖过车轮与路面，雨丝更粗更亮、落得更快。 -->
+          <g id="rain-layer-near" class="rain-layer">
+            <g class="rain-near-move">
+              <path d="M-400-600H1600V1000H-400Z" fill="url(#rain-near)" />
+            </g>
+          </g>
+          <g class="snow-layer">
+            <g class="snow-move">
+              <path d="M-400-600H1600V1000H-400Z" fill="url(#snow)" />
+            </g>
+          </g>
+        </svg>
+      </section>
+      <div class="controls">
+        <div class="weather-picker" role="group" aria-label="选择天气">
+          <button type="button" data-weather="sun" aria-pressed="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 1v3m0 16v3M1 12h3m16 0h3M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2" />
+            </svg>晴天
+          </button>
+          <button type="button" data-weather="rain" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 15a4 4 0 0 1-1-8 6 6 0 0 1 12-1 4 4 0 0 1 2 9ZM7 18l-1 3m6-3-1 3m6-3-1 3" />
+            </svg>雨天
+          </button>
+          <button type="button" data-weather="snow" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 2v20M3 7l18 10M3 17 21 7M9 4l3 3 3-3M9 20l3-3 3 3M3 10l4-1-1-4m12 14-1-4 4-1M3 14l4 1-1 4M18 5l-1 4 4 1" />
+            </svg>雪天
+          </button>
+        </div>
+        <div class="caption" role="status" id="weather-note">
+          <strong>此刻，晴。</strong> 适合把心事交给海风。
+        </div>
+        <div class="play-controls">
+          <label class="auto-label"><input type="checkbox" id="auto-weather" checked />
+            自动天气</label><button type="button" class="pause-button" id="pause" aria-label="暂停动画" aria-pressed="false">
+            <span aria-hidden="true">Ⅱ</span>
+          </button>
+        </div>
+      </div>
+    </main>
+    <footer>
+      <span>海岸慢行</span>
+    </footer>
+  </div>
+  <script>
+    (() => {
+      const scene = document.getElementById("scene");
+      const pause = document.getElementById("pause");
+      const auto = document.getElementById("auto-weather");
+      const weatherButtons = [
+        ...document.querySelectorAll("button[data-weather]"),
+      ];
+      const weatherOrder = ["sun", "rain", "snow"];
+      const labels = {
+        sun: ["晴天 · 海风轻拂", "此刻，晴。", "适合把心事交给海风。"],
+        rain: [
+          "雨天 · 听雨慢行",
+          "此刻，有雨。",
+          "每一滴雨，都有自己的节拍。",
+        ],
+        snow: [
+          "雪天 · 一路轻盈",
+          "此刻，落雪。",
+          "世界安静了，故事还在继续。",
+        ],
+      };
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+      let paused = reduced.matches;
+      let elapsed = 0;
+      let weatherElapsed = 0;
+      let previous = null;
+      let frame = null;
+      auto.checked = !reduced.matches;
+      function setWeather(weather) {
+        scene.dataset.weather = weather;
+        weatherButtons.forEach((button) =>
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.weather === weather),
+          ),
+        );
+        document.getElementById("weather-label").textContent =
+          labels[weather][0];
+        const strong = document.createElement("strong");
+        strong.textContent = labels[weather][1];
+        document
+          .getElementById("weather-note")
+          .replaceChildren(
+            strong,
+            document.createTextNode(" " + labels[weather][2]),
+          );
+        weatherElapsed = 0;
+      }
+      weatherButtons.forEach((button) =>
+        button.addEventListener("click", () => {
+          auto.checked = false;
+          setWeather(button.dataset.weather);
+        }),
+      );
+      auto.addEventListener("change", () => {
+        weatherElapsed = 0;
+      });
+      const nearLeg = document.getElementById("near-leg");
+      const farLeg = document.getElementById("far-leg");
+      const nearFoot = document.getElementById("near-foot");
+      const farFoot = document.getElementById("far-foot");
+      // 齿盘与两条曲柄臂分处不同图层，但必须共用同一个角度。
+      const drivetrain = ["chainring", "crank-far", "crank-near"].map((id) =>
+        document.getElementById(id),
+      );
+      const rider = document.getElementById("rider-body");
+      const wing = document.getElementById("rider-wing");
+      const feathers = document.getElementById("wing-feathers");
+
+      // 固定两段腿长，求两圆交点作为膝部；取前弯解，让整圈踩踏保持自然。
+      function positionLeg(leg, foot, hipX, hipY, pedalX, pedalY) {
+        const ankleX = pedalX - 6;
+        const ankleY = pedalY - 10;
+        const dx = ankleX - hipX;
+        const dy = ankleY - hipY;
+        const distance = Math.hypot(dx, dy);
+        const upper = 65;
+        const lower = 65;
+        const along =
+          (upper * upper - lower * lower + distance * distance) /
+          (2 * distance);
+        const bend = Math.sqrt(Math.max(0, upper * upper - along * along));
+        const kneeX = hipX + (along * dx + bend * dy) / distance;
+        const kneeY = hipY + (along * dy - bend * dx) / distance;
+        leg.setAttribute(
+          "d",
+          `M${hipX} ${hipY} L${kneeX} ${kneeY} L${ankleX} ${ankleY}`,
+        );
+        // 脚与踏板只平移，不跟曲柄旋转，足底始终水平贴合踏板。
+        foot.setAttribute("transform", `translate(${pedalX} ${pedalY})`);
+      }
+      function renderPedals() {
+        const phase = (elapsed / 1350) * Math.PI * 2;
+        const angle = phase + Math.PI / 4;
+        const x = Math.cos(angle) * 25;
+        const y = Math.sin(angle) * 25;
+        const bob = (1 - Math.cos(phase * 2)) * 0.8;
+        rider.setAttribute("transform", `translate(0 ${bob})`);
+        positionLeg(nearLeg, nearFoot, 560, 292 + bob, 600 + x, 384 + y);
+        positionLeg(farLeg, farFoot, 551, 292 + bob, 600 - x, 384 - y);
+        // 翼根随身体起伏，翼尖抵消位移，始终扶在同一个车把位置。
+        wing.setAttribute(
+          "d",
+          `M546 246C568 234 588 249 610 262Q638 276 667 ${249 - bob}Q674 ${244 - bob} 680 ${246 - bob}Q684 ${249 - bob} 681.5 ${255 - bob}Q678 ${261 - bob} 671 ${265 - bob}Q644 281 606 282Q578 284 553 270Z`,
+        );
+        feathers.setAttribute(
+          "d",
+          `M554 255Q574 267 598 271M552 262Q571 279 594 279M609 274Q641 285 674 ${257 - bob}`,
+        );
+        const spin = `rotate(${(angle * 180) / Math.PI} 600 384)`;
+        for (const part of drivetrain) part.setAttribute("transform", spin);
+      }
+      function tick(now) {
+        frame = null;
+        const delta = previous === null ? 0 : Math.min(now - previous, 100);
+        previous = now;
+        elapsed += delta;
+        renderPedals();
+        if (auto.checked) {
+          weatherElapsed += delta;
+          if (weatherElapsed >= 12000)
+            setWeather(
+              weatherOrder[
+              (weatherOrder.indexOf(scene.dataset.weather) + 1) % 3
+              ],
+            );
+        }
+        frame = requestAnimationFrame(tick);
+      }
+      function syncPlayback() {
+        const stopped = paused || reduced.matches || document.hidden;
+        scene.classList.toggle("paused", stopped);
+        scene.classList.toggle("reduced", reduced.matches);
+        pause.setAttribute("aria-pressed", String(paused));
+        pause.setAttribute("aria-label", paused ? "继续动画" : "暂停动画");
+        pause.firstElementChild.textContent = paused ? "▶" : "Ⅱ";
+        pause.disabled = reduced.matches;
+        pause.title = reduced.matches ? "已遵循系统的减少动态效果设置" : "";
+        auto.disabled = reduced.matches;
+        auto.title = pause.title;
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null;
+        previous = null;
+        if (!stopped) frame = requestAnimationFrame(tick);
+      }
+      pause.addEventListener("click", () => {
+        paused = !paused;
+        syncPlayback();
+      });
+      reduced.addEventListener("change", () => {
+        paused = reduced.matches;
+        if (reduced.matches) auto.checked = false;
+        syncPlayback();
+      });
+      document.addEventListener("visibilitychange", syncPlayback);
+      renderPedals();
+      syncPlayback();
+    })();
+  </script>
+</body>
+
+</html>
