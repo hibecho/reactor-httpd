@@ -44,10 +44,16 @@
 
 #include "reactor/TimerQueue.hpp"
 #include "tcp/Connection.hpp"
+#include "tcp/ResourceLimits.hpp"
+#include <chrono>
+#include <exception>
+#include <csignal>
+#include <unordered_set>
 #include <atomic>
 #include <memory>
 #include <stdint.h>
 #include <unordered_map>
+class Channel;
 class Acceptor;
 class EventLoop;
 class LoopThreadPool;
@@ -82,6 +88,14 @@ class TcpServer
     void CancelTask(uint64_t timer_id);
     // 启动服务器
     void Start();
+    // 异步请求；Start 返回时清理和线程回收完成。启动前停止后不可重启。
+    // 调用者须保证对象活到 Start 返回；不能在运行中析构。
+    void Stop();
+    void SetResourceLimits(const ResourceLimits &limits);
+    void SetShutdownGrace(std::chrono::milliseconds grace);
+    void EnableSignalStop();
+    uint16_t GetPort() const noexcept { return _port; }
+
     // 设置连接回调
     void SetConnectedCallback(ConnectedCallback cb);
     // 设置消息处理回调
@@ -99,6 +113,15 @@ class TcpServer
     void RemoveConnectionInLoop(uint64_t id);
     uint64_t AllocateId(); // 连接和普通任务统一取号，不回收 ID。
     void RunAfterInLoop(uint64_t id, task_t task, int delay);
+    void EnsureConfigurable() const;
+    void StopInLoop();
+    void MaybeFinishStop();
+    void WorkerCleanupComplete();
+    void ForceCloseConnections();
+    void HandleException(std::exception_ptr error) noexcept;
+    void SetupStopEvents();
+    void CleanupStopEvents() noexcept;
+
 
   private:
     /*基本属性*/
@@ -110,6 +133,26 @@ class TcpServer
     std::unique_ptr<Acceptor> _acceptor;                // 监听套接字管理的对象
     std::unique_ptr<LoopThreadPool> _pool;              // 这是从属EventLoop线程池
     std::unordered_map<uint64_t, ConnectionPtr> _conns; // 保存管理所有连接对应的shared_ptr对象
+
+    enum class State { Created, Running, Stopping, Stopped };
+    // 状态及业务提交与 Connection::Send 共用额度锁，定义统一接受边界。
+    std::shared_ptr<OutputBudget> _budget = std::make_shared<OutputBudget>();
+    State _state = State::Created;
+    std::chrono::milliseconds _shutdown_grace{5000};
+    std::unordered_set<uint64_t> _business_timers;
+    std::exception_ptr _runtime_error; // 由额度锁保护
+    bool _stop_started = false;
+    bool _cleanup_barrier = false;
+    std::size_t _cleanup_waiting = 0;
+    int _deadline_fd = -1;
+    std::unique_ptr<Channel> _deadline_channel;
+    bool _deadline_registered = false;
+    bool _signal_stop = false;
+    int _signal_fd = -1;
+    std::unique_ptr<Channel> _signal_channel;
+    bool _signal_registered = false;
+    bool _signal_mask_saved = false;
+    sigset_t _old_signal_mask{};
 
     /*设置事件回调*/
     ConnectedCallback _connected_callback;
