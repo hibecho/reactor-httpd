@@ -1,60 +1,61 @@
 #include "base/Logger.hpp"
-#include <cassert>
 #include <atomic>
-#include <limits>
-#include <signal.h>
-#include <cstdlib>
+#include <cassert>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <dirent.h>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <new>
 #include <pthread.h>
-#include <cstdint>
 #include <set>
+#include <signal.h>
 #include <stdexcept>
-#include <thread>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
 namespace
 {
-    std::string Read(const std::string &path)
-    {
-        std::ifstream in(path);
-        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
-    struct TempDirectory
-    {
-        std::string path;
-        TempDirectory()
-        {
-            char name[] = "/tmp/http-logger-XXXXXX";
-            char *result = mkdtemp(name);
-            if (!result)
-                throw std::runtime_error("mkdtemp failed");
-            path = result;
-        }
-        ~TempDirectory()
-        {
-            Logger::Instance().Shutdown();
-            DIR *dir = opendir(path.c_str());
-            if (dir)
-            {
-                while (dirent *entry = readdir(dir))
-                {
-                    std::string name = entry->d_name;
-                    if (name != "." && name != "..")
-                        unlink((path + "/" + name).c_str());
-                }
-                closedir(dir);
-            }
-            rmdir(path.c_str());
-        }
-    };
+std::string Read(const std::string &path)
+{
+    std::ifstream in(path);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
+struct TempDirectory
+{
+    std::string path;
+    TempDirectory()
+    {
+        char name[] = "/tmp/http-logger-XXXXXX";
+        char *result = mkdtemp(name);
+        if (!result)
+            throw std::runtime_error("mkdtemp failed");
+        path = result;
+    }
+    ~TempDirectory()
+    {
+        Logger::Instance().Shutdown();
+        DIR *dir = opendir(path.c_str());
+        if (dir)
+        {
+            while (dirent *entry = readdir(dir))
+            {
+                std::string name = entry->d_name;
+                if (name != "." && name != "..")
+                    unlink((path + "/" + name).c_str());
+            }
+            closedir(dir);
+        }
+        rmdir(path.c_str());
+    }
+};
+} // namespace
 
 void TestLoggerMode(bool async)
 {
@@ -66,10 +67,9 @@ void TestLoggerMode(bool async)
     cfg.file_path = temp.path + "/basic.log";
     cfg.pattern = "%l|%s:%#|%v";
     log.Init(cfg);
-    const Logger::Level levels[] = {
-        Logger::Level::Trace, Logger::Level::Debug, Logger::Level::Info,
-        Logger::Level::Warn, Logger::Level::Error, Logger::Level::Critical,
-        Logger::Level::Off};
+    const Logger::Level levels[] = {Logger::Level::Trace, Logger::Level::Debug, Logger::Level::Info,
+                                    Logger::Level::Warn,  Logger::Level::Error, Logger::Level::Critical,
+                                    Logger::Level::Off};
     for (int threshold = 0; threshold < 7; ++threshold)
     {
         log.SetLevel(levels[threshold]);
@@ -99,7 +99,8 @@ void TestLoggerMode(bool async)
     else
         assert(false);
     LOG_ERROR("auto flush");
-    if (async) log.Flush(); // 同步模式仍验证 ERROR 的即时刷新。
+    if (async)
+        log.Flush(); // 同步模式仍验证 ERROR 的即时刷新。
     std::string content = Read(cfg.file_path);
     assert(content.find("info|TestLogger.cc:" + std::to_string(source_line) + "|hello 42") != std::string::npos);
     assert(content.find("warning|") != std::string::npos);
@@ -177,8 +178,10 @@ void TestLoggerMode(bool async)
     log.Init(cfg);
     std::vector<std::thread> threads;
     for (int t = 0; t < 4; ++t)
-        threads.emplace_back([t]
-                             { for (int i = 0; i < 250; ++i) LOG_INFO("{}:{}", t, i); });
+        threads.emplace_back([t] {
+            for (int i = 0; i < 250; ++i)
+                LOG_INFO("{}:{}", t, i);
+        });
     for (auto &thread : threads)
         thread.join();
     log.Flush();
@@ -227,16 +230,24 @@ void TestNonThrowingLogger(bool async)
         int evaluated = 0;
         auto fail = [&]() -> int {
             ++evaluated;
-            if (kind == 0) throw std::runtime_error("log argument failure");
-            if (kind == 1) throw std::bad_alloc();
+            if (kind == 0)
+                throw std::runtime_error("log argument failure");
+            if (kind == 1)
+                throw std::bad_alloc();
             throw 42;
         };
         // 三档异常都必须被宏吞掉。第三档 throw 42 是非 std 异常，专门证明
         // 宏里的 catch 不能收窄成 std::exception：spdlog 自己的 SPDLOG_LOGGER_CATCH
         // 对非 std 异常是记一条错误再重新抛出。
         bool propagated = false;
-        try { LOG_ERROR("failed {}", fail()); }
-        catch (...) { propagated = true; }
+        try
+        {
+            LOG_ERROR("failed {}", fail());
+        }
+        catch (...)
+        {
+            propagated = true;
+        }
         assert(!propagated && evaluated == 1);
     }
 
@@ -246,9 +257,11 @@ void TestNonThrowingLogger(bool async)
         LOG_ERROR("single argument");
     else
         assert(false);
-    if (async) log.Flush();
+    if (async)
+        log.Flush();
     const std::string content = Read(cfg.file_path);
-    assert(content.find("error|TestLogger.cc:" + std::to_string(source_line) + "|after failures 42") != std::string::npos);
+    assert(content.find("error|TestLogger.cc:" + std::to_string(source_line) + "|after failures 42") !=
+           std::string::npos);
     assert(content.find("single argument") != std::string::npos);
     assert(content.find("failed") == std::string::npos);
 
@@ -268,9 +281,25 @@ size_t TaskCount()
     assert(dir);
     size_t count = 0;
     while (dirent *entry = readdir(dir))
-        if (entry->d_name[0] != '.') ++count;
+        if (entry->d_name[0] != '.')
+            ++count;
     closedir(dir);
     return count;
+}
+
+// 等待线程数回落到期望值。pthread_join 返回不代表内核已摘除 /proc/self/task 条目：
+// 唤醒 join 的 clear_child_tid 在 exit_mm 阶段，条目清除在随后的 release_task。
+// 实测空载下 20000 次 join 有 136 次能立刻读到残留条目，重负载下窗口更宽，所以
+// 只在「线程消失」这个方向上等待，并设有上限——真泄漏的线程不会自行消失，仍会被抓到。
+size_t WaitForTaskCount(size_t expected)
+{
+    for (int attempt = 0; attempt < 1000; ++attempt)
+    {
+        if (TaskCount() == expected)
+            return expected;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return TaskCount();
 }
 
 void TestImplicitDefaultAndSignalMask()
@@ -279,7 +308,8 @@ void TestImplicitDefaultAndSignalMask()
     DIR *tasks = opendir("/proc/self/task");
     assert(tasks != nullptr);
     while (dirent *entry = readdir(tasks))
-        if (entry->d_name[0] != '.') before.insert(entry->d_name);
+        if (entry->d_name[0] != '.')
+            before.insert(entry->d_name);
     closedir(tasks);
     sigset_t original, after;
     assert(pthread_sigmask(SIG_SETMASK, nullptr, &original) == 0);
@@ -295,14 +325,16 @@ void TestImplicitDefaultAndSignalMask()
     int workers = 0;
     while (dirent *entry = readdir(tasks))
     {
-        if (entry->d_name[0] == '.' || before.count(entry->d_name)) continue;
+        if (entry->d_name[0] == '.' || before.count(entry->d_name))
+            continue;
         ++workers;
         std::ifstream status(std::string("/proc/self/task/") + entry->d_name + "/status");
         std::string line;
         bool checked = false;
         while (std::getline(status, line))
         {
-            if (line.compare(0, 7, "SigBlk:") != 0) continue;
+            if (line.compare(0, 7, "SigBlk:") != 0)
+                continue;
             const auto mask = std::stoull(line.substr(7), nullptr, 16);
             for (int signal : {SIGINT, SIGTERM, SIGUSR1})
                 assert((mask & (std::uint64_t(1) << (signal - 1))) != 0);
@@ -313,7 +345,7 @@ void TestImplicitDefaultAndSignalMask()
     closedir(tasks);
     assert(workers == 1);
     log.Shutdown();
-    assert(TaskCount() == before.size());
+    assert(WaitForTaskCount(before.size()) == before.size());
     std::cout << "Implicit asynchronous default and signal mask tests passed\n";
 }
 
@@ -322,7 +354,7 @@ void TestDefaultWorkerAndSmallQueue()
     TempDirectory temp;
     Logger &log = Logger::Instance();
     log.Shutdown();
-    const size_t baseline = TaskCount();
+    const size_t baseline = WaitForTaskCount(1); // 本测试进程除主线程外没有常驻线程。
     Logger::Config cfg;
     assert(cfg.async && cfg.queue_size == 8192);
     cfg.console = false;
@@ -352,7 +384,7 @@ void TestDefaultWorkerAndSmallQueue()
     }
     log.Shutdown(); // 不预先 Flush，验证排空最后一批。
     assert(Read(cfg.file_path) == expected);
-    assert(TaskCount() == baseline);
+    assert(WaitForTaskCount(baseline) == baseline);
     cfg.async = false;
     log.Init(cfg);
     assert(TaskCount() == baseline);
@@ -411,11 +443,14 @@ void TestConcurrentConfiguration()
     std::vector<std::thread> producers;
     for (int t = 0; t < 4; ++t)
         producers.emplace_back([&, t] {
-            while (!start.load()) std::this_thread::yield();
-            for (int i = 0; i < 1000; ++i) LOG_INFO("{}:{}", t, i);
+            while (!start.load())
+                std::this_thread::yield();
+            for (int i = 0; i < 1000; ++i)
+                LOG_INFO("{}:{}", t, i);
         });
     std::thread configure([&] {
-        while (!start.load()) std::this_thread::yield();
+        while (!start.load())
+            std::this_thread::yield();
         for (int i = 0; i < 20; ++i)
         {
             cfg.async = i % 2 == 0;
@@ -424,11 +459,14 @@ void TestConcurrentConfiguration()
         }
     });
     std::thread flush([&] {
-        while (!start.load()) std::this_thread::yield();
-        for (int i = 0; i < 30; ++i) log.Flush();
+        while (!start.load())
+            std::this_thread::yield();
+        for (int i = 0; i < 30; ++i)
+            log.Flush();
     });
     start.store(true);
-    for (auto &producer : producers) producer.join();
+    for (auto &producer : producers)
+        producer.join();
     configure.join();
     flush.join();
     log.Shutdown();
@@ -436,7 +474,11 @@ void TestConcurrentConfiguration()
     std::set<std::string> records;
     std::string line;
     size_t count = 0;
-    while (std::getline(input, line)) { records.insert(line); ++count; }
+    while (std::getline(input, line))
+    {
+        records.insert(line);
+        ++count;
+    }
     assert(count == 4000 && records.size() == 4000);
     for (int t = 0; t < 4; ++t)
         for (int i = 0; i < 1000; ++i)
@@ -452,15 +494,15 @@ void TestNormalExit()
     assert(child >= 0);
     if (child == 0)
     {
-        execl("/proc/self/exe", "TestLogger", "--normal-exit", path.c_str(),
-              static_cast<char *>(nullptr));
+        execl("/proc/self/exe", "TestLogger", "--normal-exit", path.c_str(), static_cast<char *>(nullptr));
         _exit(127);
     }
     int status = 0;
     assert(waitpid(child, &status, 0) == child);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     std::string expected;
-    for (int i = 0; i < 512; ++i) expected += "exit-" + std::to_string(i) + "\n";
+    for (int i = 0; i < 512; ++i)
+        expected += "exit-" + std::to_string(i) + "\n";
     assert(Read(path) == expected);
     std::cout << "Default asynchronous normal-exit test passed\n";
 }
@@ -477,7 +519,8 @@ int main(int argc, char **argv)
         cfg.queue_size = 1;
         alarm(30);
         Logger::Instance().Init(cfg);
-        for (int i = 0; i < 512; ++i) LOG_INFO("exit-{}", i);
+        for (int i = 0; i < 512; ++i)
+            LOG_INFO("exit-{}", i);
         return 0; // 不显式关闭，验证单例析构能刷新输出缓冲。
     }
     // 包括 Flush/Shutdown 死锁和子进程退出挂起，统一设置硬超时。
