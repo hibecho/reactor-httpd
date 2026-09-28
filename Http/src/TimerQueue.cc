@@ -33,8 +33,7 @@ TimerTask::TimerTask(uint64_t id, uint32_t timeout, const task_t &cb)
     , _timeout(timeout)
     , _task_cb(cb)
     , _canceled(false)
-{
-}
+{}
 
 void TimerTask::SetRelease(ReleaseFunc release)
 {
