@@ -12,27 +12,29 @@
 #include <string>
 #include <utility>
 
-// 同步日志模块：配置、写入、刷新与关闭可并发调用。
+// 双模式日志模块，默认异步；配置、写入、刷新与关闭可并发调用。
 class Logger
 {
-    static const int MAX_FILE_SIZE = 5 * 1024 * 1024;
+    static constexpr std::size_t MAX_FILE_SIZE = 5 * 1024 * 1024;
 
   public:
-    // 模块自己的等级；与底层枚举通过显式映射转换。
+    // 模块自己的等级；取值直接对齐 spdlog::level，转换退化为一次范围校验后的 cast。
     enum class Level
     {
-        Trace,
-        Debug,
-        Info,
-        Warn,
-        Error,
-        Critical,
-        Off
+        Trace = spdlog::level::trace,
+        Debug = spdlog::level::debug,
+        Info = spdlog::level::info,
+        Warn = spdlog::level::warn,
+        Error = spdlog::level::err,
+        Critical = spdlog::level::critical,
+        Off = spdlog::level::off
     };
 
     // 配置项
     struct Config
     {
+        bool async = true;                         // false 为同步；true 使用专用后台线程。
+        std::size_t queue_size = 8192;             // 异步队列容量，满时阻塞；同步模式忽略。
         bool console = true;                       // 是否向控制台输出日志
         std::string file_path;                     // 空字符串禁用文件输出。
         std::size_t max_file_size = MAX_FILE_SIZE; // 单个日志文件的滚动阈值 5 MB
@@ -46,7 +48,7 @@ class Logger
     static Logger &Instance();
 
     // 2.初始化，将config配置进行应用
-    //  默认控制台 info；可重复初始化，失败保留原日志器。
+    //  默认异步控制台 info；可切换同步/异步，失败保留原日志器。
     //  非法配置抛 invalid_argument，文件打开失败抛 spdlog_ex。
     void Init(const Config &config);
 
@@ -59,10 +61,10 @@ class Logger
     // 5.判断是否需要输出日志
     bool ShouldLog(Level level);
 
-    // 6.刷新输出缓冲，返回后仍可继续写日志；不等于 fsync。
+    // 6.等待先前已提交日志处理并刷新输出，返回后可继续写；不等于 fsync。
     void Flush();
 
-    // 7.刷新并关闭，直到 Init 前保持静默；建议工作线程退出后调用。
+    // 7.排空、刷新并回收后台线程，直到 Init 前保持静默；建议业务线程退出后调用。
     void Shutdown();
 
     // 8.调用日志
@@ -81,12 +83,14 @@ class Logger
     Logger &operator=(const Logger &) = delete;
 
   private:
+    struct AsyncState;
+    void FlushLocked(); // 调用者持有 _mutex，等待期间禁止新日志越过刷新边界。
     Logger();
     ~Logger();
     static spdlog::level::level_enum ToSpdlogLevel(Level level);
-    static Level FromSpdlogLevel(spdlog::level::level_enum level);
     std::mutex _mutex;
     std::shared_ptr<spdlog::logger> _logger;
+    std::unique_ptr<AsyncState> _async;
 };
 
 // 全部级别均编译保留，不受 SPDLOG_ACTIVE_LEVEL 影响。
