@@ -1,6 +1,6 @@
 #include "reactor/Epoller.hpp"
-#include "reactor/Channel.hpp"
 #include "base/Logger.hpp"
+#include "reactor/Channel.hpp"
 #include <cerrno>
 #include <stdexcept>
 #include <string>

@@ -9,7 +9,8 @@
 HttpResponse::HttpResponse(int status)
     : _status(status)
     , _redirect_flag(false)
-{}
+{
+}
 
 void HttpResponse::SetStatus(int status)
 {

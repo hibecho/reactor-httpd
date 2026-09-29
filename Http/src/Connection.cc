@@ -14,7 +14,8 @@
 
 Connection::Connection(EventLoop *loop, uint64_t id, int fd)
     : Connection(loop, id, Socket(fd), nullptr)
-{}
+{
+}
 
 Connection::Connection(EventLoop *loop, uint64_t id, Socket socket, std::shared_ptr<OutputBudget> budget)
     : _account(std::make_shared<SendAccount>(budget ? std::move(budget) : std::make_shared<OutputBudget>()))
@@ -262,7 +263,9 @@ bool Connection::Send(std::string data)
     if (data.size() > budget.limits.max_output - _account->pending ||
         data.size() > budget.limits.max_total_output - budget.used)
     {
-        _loop->QueueInLoopCommitted([self] { self->HandleError(); });
+        _loop->QueueInLoopCommitted([self] {
+            self->HandleError();
+        });
         _account->send_open = false;
         return false;
     }
@@ -274,7 +277,10 @@ bool Connection::Send(std::string data)
     if (_loop->IsInLoopThread() && _account->queued_sends == 0)
     {
         lock.unlock();
-        try { SendInLoop(std::move(data), reservation); }
+        try
+        {
+            SendInLoop(std::move(data), reservation);
+        }
         catch (...)
         {
             // Buffer 可能已接管数据；关闭后拒绝重试，避免异常被误当作未接受。
@@ -290,7 +296,10 @@ bool Connection::Send(std::string data)
                 --self->_account->queued_sends;
                 reservation->queued = false;
             }
-            try { self->SendInLoop(std::move(data), reservation); }
+            try
+            {
+                self->SendInLoop(std::move(data), reservation);
+            }
             catch (...)
             {
                 self->HandleError();
@@ -328,9 +337,8 @@ std::size_t Connection::PendingOutput() const
 bool Connection::CanProcessInput() const
 {
     std::lock_guard<std::mutex> lock(_account->budget->mutex);
-    return _status == ConnStatus::CONNECTED && !_read_paused && !_release_pending &&
-           _account->send_open && !_account->budget->stopping.load() &&
-           _account->pending < _account->budget->limits.output_high;
+    return _status == ConnStatus::CONNECTED && !_read_paused && !_release_pending && _account->send_open &&
+           !_account->budget->stopping.load() && _account->pending < _account->budget->limits.output_high;
 }
 
 void Connection::RefundOutput(std::size_t bytes)
@@ -355,7 +363,9 @@ void Connection::UpdateBackpressure()
     else if (_read_paused && size <= limits.output_low && !_resume_pending)
     {
         auto self = shared_from_this();
-        _loop->QueueInLoopCommitted([self] { self->ResumeInput(); });
+        _loop->QueueInLoopCommitted([self] {
+            self->ResumeInput();
+        });
         _resume_pending = true;
     }
 }
@@ -375,14 +385,24 @@ void Connection::ResumeInput()
         if (callback && _in_buffer->GetReadableSize() != 0)
             callback(shared_from_this(), _in_buffer.get());
     }
-    catch (const std::bad_alloc &) { throw; }
-    catch (...) { HandleError(); }
+    catch (const std::bad_alloc &)
+    {
+        throw;
+    }
+    catch (...)
+    {
+        HandleError();
+    }
 }
 
 void Connection::ForceClose()
 {
     auto self = shared_from_this();
-    Submit([self] { self->HandleError(); }, true);
+    Submit(
+        [self] {
+            self->HandleError();
+        },
+        true);
 }
 
 void Connection::HandleWrite()
@@ -455,7 +475,9 @@ void Connection::ShutDown()
     }
     else
     {
-        _loop->QueueInLoopCommitted([self] { self->ShutDownInLoop(); });
+        _loop->QueueInLoopCommitted([self] {
+            self->ShutDownInLoop();
+        });
         _account->send_open = false;
     }
 }
@@ -651,16 +673,14 @@ void Connection::EnableInactiveReleaseInLoop(uint32_t timeout)
 {
     assert(_loop->IsInLoopThread());
 
-    if (_release_pending || _released || _status == ConnStatus::DISCONNETING ||
-        _account->budget->stopping.load())
+    if (_release_pending || _released || _status == ConnStatus::DISCONNETING || _account->budget->stopping.load())
         return;
 
     std::weak_ptr<Connection> weak = shared_from_this();
 
     _loop->TimerAdd(_timer_id, timeout, [weak]() noexcept {
         ConnectionPtr conn = weak.lock();
-        if (!conn || conn->_account->budget->stopping.load() ||
-            conn->_status == ConnStatus::DISCONNETING)
+        if (!conn || conn->_account->budget->stopping.load() || conn->_status == ConnStatus::DISCONNETING)
             return; // 已停止接纳/进入排空时，旧空闲超时不得提前强关。
         try
         {
@@ -704,7 +724,7 @@ void Connection::SwitchProtocol(std::any context, ConnectedCallback conn, Messag
     auto self = shared_from_this();
     // 任务自己拥有参数，调用方的局部变量和临时对象可以先销毁。
     Submit([self, context = std::move(context), conn = std::move(conn), msg = std::move(msg),
-                      closed = std::move(closed), event = std::move(event)]() mutable {
+            closed = std::move(closed), event = std::move(event)]() mutable {
         self->SwitchProtocolInLoop(std::move(context), std::move(conn), std::move(msg), std::move(closed),
                                    std::move(event));
     });
