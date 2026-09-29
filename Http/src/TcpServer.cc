@@ -1,10 +1,10 @@
 #include "tcp/TcpServer.hpp"
-#include "tcp/Acceptor.hpp"
-#include "tcp/Socket.hpp"
+#include "base/Logger.hpp"
 #include "reactor/Channel.hpp"
 #include "reactor/EventLoop.hpp"
+#include "tcp/Acceptor.hpp"
+#include "tcp/Socket.hpp"
 #include "thread/LoopThreadPool.hpp"
-#include "base/Logger.hpp"
 #include <arpa/inet.h>
 #include <cassert>
 #include <cerrno>
@@ -12,14 +12,15 @@
 #include <limits>
 #include <pthread.h>
 #include <stdexcept>
-#include <system_error>
 #include <sys/signalfd.h>
 #include <sys/timerfd.h>
+#include <system_error>
 #include <unistd.h>
 #include <utility>
 
 TcpServer::TcpServer(uint16_t port)
-    : _port(port), _baseloop(std::make_unique<EventLoop>())
+    : _port(port)
+    , _baseloop(std::make_unique<EventLoop>())
     , _acceptor(std::make_unique<Acceptor>(_baseloop.get(), port))
     , _pool(std::make_unique<LoopThreadPool>(_baseloop.get()))
 {
@@ -39,7 +40,10 @@ TcpServer::~TcpServer()
         Stop();
         _baseloop->DrainPendingTasks();
     }
-    catch (const std::exception &error) { LOG_ERROR("server destructor cleanup: {}", error.what()); }
+    catch (const std::exception &error)
+    {
+        LOG_ERROR("server destructor cleanup: {}", error.what());
+    }
     CleanupStopEvents();
 }
 
@@ -96,9 +100,13 @@ void TcpServer::HandleException(std::exception_ptr error) noexcept
 {
     {
         std::lock_guard<std::mutex> lock(_budget->mutex);
-        if (!_runtime_error) _runtime_error = error;
+        if (!_runtime_error)
+            _runtime_error = error;
     }
-    try { Stop(); }
+    try
+    {
+        Stop();
+    }
     catch (...)
     {
         // 内存/队列持续失败时无法再保证清理任务可投递，不能让 worker 悄悄退出。
@@ -109,13 +117,17 @@ void TcpServer::HandleException(std::exception_ptr error) noexcept
 
 void TcpServer::SetupStopEvents()
 {
-    _deadline_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-    if (_deadline_fd < 0)
+    const int deadline_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (deadline_fd < 0)
         throw std::system_error(errno, std::generic_category(), "shutdown timerfd_create");
-    _deadline_channel = std::make_unique<Channel>(_deadline_fd, _baseloop.get());
+    // 从这一行起 fd 由成员负责关闭，后续任何一步抛异常都不会泄漏。
+    _deadline_fd = FdGuard(deadline_fd);
+    _deadline_channel = std::make_unique<Channel>(deadline_fd, _baseloop.get());
     _deadline_channel->SetReadCallback([this] {
         uint64_t expirations;
-        while (read(_deadline_fd, &expirations, sizeof(expirations)) < 0 && errno == EINTR) {}
+        while (read(_deadline_fd.GetFd(), &expirations, sizeof(expirations)) < 0 && errno == EINTR)
+        {
+        }
         ForceCloseConnections();
     });
     _deadline_channel->EnableRead();
@@ -130,17 +142,23 @@ void TcpServer::SetupStopEvents()
     if (error != 0)
         throw std::system_error(error, std::generic_category(), "pthread_sigmask");
     _signal_mask_saved = true;
-    _signal_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
-    if (_signal_fd < 0)
+    const int signal_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+    if (signal_fd < 0)
         throw std::system_error(errno, std::generic_category(), "signalfd");
-    _signal_channel = std::make_unique<Channel>(_signal_fd, _baseloop.get());
+    _signal_fd = FdGuard(signal_fd);
+    _signal_channel = std::make_unique<Channel>(signal_fd, _baseloop.get());
     _signal_channel->SetReadCallback([this] {
         signalfd_siginfo info;
         for (;;)
         {
-            const auto count = read(_signal_fd, &info, sizeof(info));
-            if (count == sizeof(info)) { Stop(); continue; }
-            if (count < 0 && errno == EINTR) continue;
+            const auto count = read(_signal_fd.GetFd(), &info, sizeof(info));
+            if (count == sizeof(info))
+            {
+                Stop();
+                continue;
+            }
+            if (count < 0 && errno == EINTR)
+                continue;
             break;
         }
     });
@@ -150,26 +168,43 @@ void TcpServer::SetupStopEvents()
 
 void TcpServer::CleanupStopEvents() noexcept
 {
-    try { if (_deadline_registered) _deadline_channel->Remove(); }
-    catch (const std::exception &error) { LOG_ERROR("shutdown channel cleanup: {}", error.what()); }
+    try
+    {
+        if (_deadline_registered)
+            _deadline_channel->Remove();
+    }
+    catch (const std::exception &error)
+    {
+        LOG_ERROR("shutdown channel cleanup: {}", error.what());
+    }
     _deadline_registered = false;
     _deadline_channel.reset();
-    if (_deadline_fd >= 0) { close(_deadline_fd); _deadline_fd = -1; }
-    try { if (_signal_registered) _signal_channel->Remove(); }
-    catch (const std::exception &error) { LOG_ERROR("signal channel cleanup: {}", error.what()); }
+    _deadline_fd.Close(); // 幂等，CleanupStopEvents 允许被多次进入
+    try
+    {
+        if (_signal_registered)
+            _signal_channel->Remove();
+    }
+    catch (const std::exception &error)
+    {
+        LOG_ERROR("signal channel cleanup: {}", error.what());
+    }
     _signal_registered = false;
     _signal_channel.reset();
-    if (_signal_fd >= 0)
+    if (_signal_fd.Valid())
     {
+        // 先排空内核里未读的信号再关闭，顺序不能调换。
         signalfd_siginfo info;
-        while (read(_signal_fd, &info, sizeof(info)) == sizeof(info)) {}
-        close(_signal_fd);
-        _signal_fd = -1;
+        while (read(_signal_fd.GetFd(), &info, sizeof(info)) == sizeof(info))
+        {
+        }
+        _signal_fd.Close();
     }
     if (_signal_mask_saved)
     {
         const int error = pthread_sigmask(SIG_SETMASK, &_old_signal_mask, nullptr);
-        if (error) LOG_ERROR("restore signal mask failed: {}", error);
+        if (error)
+            LOG_ERROR("restore signal mask failed: {}", error);
         _signal_mask_saved = false;
     }
 }
@@ -184,18 +219,22 @@ void TcpServer::Start()
         std::lock_guard<std::mutex> lock(_budget->mutex);
         cannot_start = _state != State::Created;
         prestart_cleanup = _state == State::Stopped && !_stop_started;
-        if (!cannot_start) _state = State::Running;
+        if (!cannot_start)
+            _state = State::Running;
     }
     if (cannot_start)
     {
-        if (prestart_cleanup) _baseloop->DrainPendingTasks();
+        if (prestart_cleanup)
+            _baseloop->DrainPendingTasks();
         throw std::logic_error("TcpServer cannot restart or start after Stop");
     }
     std::exception_ptr failure;
     try
     {
         // 创建工作线程前阻塞信号，使所有 worker 继承掩码。
-        auto on_exception = [this](std::exception_ptr error) { HandleException(error); };
+        auto on_exception = [this](std::exception_ptr error) {
+            HandleException(error);
+        };
         _baseloop->SetExceptionHandler(on_exception);
         SetupStopEvents();
         _pool->Create();
@@ -206,8 +245,11 @@ void TcpServer::Start()
                 loop->SetExceptionHandler(std::move(handler));
             });
         }
-        _acceptor->SetAcceptCallback([this](int fd) { NewConnection(fd); });
-        if (!_budget->stopping.load()) _acceptor->StartAccepting();
+        _acceptor->SetAcceptCallback([this](int fd) {
+            NewConnection(fd);
+        });
+        if (!_budget->stopping.load())
+            _acceptor->StartAccepting();
         _baseloop->Loop();
     }
     catch (...)
@@ -223,20 +265,30 @@ void TcpServer::Start()
         StopInLoop();
         ForceCloseConnections();
         _baseloop->DrainPendingTasks();
-        if (!_conns.empty() || _cleanup_waiting != 0) _baseloop->Loop();
+        if (!_conns.empty() || _cleanup_waiting != 0)
+            _baseloop->Loop();
     }
     // 正常退出必须由停止屏障触发；工作线程在连接全部解除登记后才退出。
-    try { _pool->Stop(); }
-    catch (...) { if (!failure) failure = std::current_exception(); }
+    try
+    {
+        _pool->Stop();
+    }
+    catch (...)
+    {
+        if (!failure)
+            failure = std::current_exception();
+    }
     _baseloop->DrainPendingTasks();
     CleanupStopEvents();
     {
         std::lock_guard<std::mutex> lock(_budget->mutex);
         _budget->stopping.store(true);
         _state = State::Stopped;
-        if (!failure) failure = _runtime_error;
+        if (!failure)
+            failure = _runtime_error;
     }
-    if (failure) std::rethrow_exception(failure);
+    if (failure)
+        std::rethrow_exception(failure);
 }
 
 void TcpServer::Stop()
@@ -244,10 +296,13 @@ void TcpServer::Stop()
     bool before_start = false;
     {
         std::lock_guard<std::mutex> lock(_budget->mutex);
-        if (_state == State::Stopping || _state == State::Stopped) return;
+        if (_state == State::Stopping || _state == State::Stopped)
+            return;
         before_start = _state == State::Created;
         // 先保证任务已提交再关闭入口；同锁下 Send 不会插入两步之间。
-        _baseloop->QueueInLoopCommitted([this] { StopInLoop(); });
+        _baseloop->QueueInLoopCommitted([this] {
+            StopInLoop();
+        });
         _budget->stopping.store(true);
         _state = before_start ? State::Stopped : State::Stopping;
     }
@@ -258,10 +313,12 @@ void TcpServer::Stop()
 void TcpServer::StopInLoop()
 {
     assert(_baseloop->IsInLoopThread());
-    if (_stop_started) return;
+    if (_stop_started)
+        return;
     _stop_started = true;
     _acceptor->StopAccepting();
-    for (auto id : _business_timers) _baseloop->TimerCancel(id);
+    for (auto id : _business_timers)
+        _baseloop->TimerCancel(id);
     _business_timers.clear();
     for (auto &entry : _conns)
     {
@@ -273,8 +330,9 @@ void TcpServer::StopInLoop()
         itimerspec specification{};
         specification.it_value.tv_sec = _shutdown_grace.count() / 1000;
         specification.it_value.tv_nsec = (_shutdown_grace.count() % 1000) * 1000000;
-        if (_shutdown_grace.count() == 0) specification.it_value.tv_nsec = 1;
-        if (_deadline_fd < 0 || timerfd_settime(_deadline_fd, 0, &specification, nullptr) < 0)
+        if (_shutdown_grace.count() == 0)
+            specification.it_value.tv_nsec = 1;
+        if (!_deadline_fd.Valid() || timerfd_settime(_deadline_fd.GetFd(), 0, &specification, nullptr) < 0)
             ForceCloseConnections();
     }
     MaybeFinishStop();
@@ -282,13 +340,15 @@ void TcpServer::StopInLoop()
 
 void TcpServer::ForceCloseConnections()
 {
-    for (auto &entry : _conns) entry.second->ForceClose();
+    for (auto &entry : _conns)
+        entry.second->ForceClose();
     MaybeFinishStop();
 }
 
 void TcpServer::MaybeFinishStop()
 {
-    if (!_stop_started || !_conns.empty() || _cleanup_barrier) return;
+    if (!_stop_started || !_conns.empty() || _cleanup_barrier)
+        return;
     _cleanup_barrier = true;
     auto loops = _pool->Loops();
     _cleanup_waiting = loops.size();
@@ -296,7 +356,9 @@ void TcpServer::MaybeFinishStop()
     {
         loop->QueueInLoopCommitted([this, loop] {
             loop->DrainPendingTasks();
-            _baseloop->QueueInLoopCommitted([this] { WorkerCleanupComplete(); });
+            _baseloop->QueueInLoopCommitted([this] {
+                WorkerCleanupComplete();
+            });
         });
     }
     if (_cleanup_waiting == 0)
@@ -319,18 +381,22 @@ void TcpServer::WorkerCleanupComplete()
 void TcpServer::NewConnection(int fd)
 {
     Socket owner(fd);
-    if (_budget->stopping.load() || _conns.size() >= _budget->limits.max_connections) return;
+    if (_budget->stopping.load() || _conns.size() >= _budget->limits.max_connections)
+        return;
     const uint64_t id = AllocateId();
     auto conn = std::make_shared<Connection>(_pool->NextLoop(), id, std::move(owner), _budget);
     conn->SetConnectedCallback(_connected_callback);
     conn->SetMessageCallback(_message_callback);
     conn->SetAnyEventCallback(_event_callback);
     conn->SetClosedCallback(_closed_callback);
-    conn->SetServerClosedCallback([this](const ConnectionPtr &closed) { RemoveConnection(closed); });
+    conn->SetServerClosedCallback([this](const ConnectionPtr &closed) {
+        RemoveConnection(closed);
+    });
     _conns.emplace(id, conn);
     try
     {
-        if (_enable_inactive_release) conn->EnableInactiveRelease(_inactive_timeout);
+        if (_enable_inactive_release)
+            conn->EnableInactiveRelease(_inactive_timeout);
         conn->Established();
     }
     catch (...)
@@ -344,7 +410,9 @@ void TcpServer::NewConnection(int fd)
 void TcpServer::RemoveConnection(const ConnectionPtr &conn)
 {
     const auto id = conn->GetConnetId();
-    _baseloop->QueueInLoopCommitted([this, id] { RemoveConnectionInLoop(id); });
+    _baseloop->QueueInLoopCommitted([this, id] {
+        RemoveConnectionInLoop(id);
+    });
 }
 
 void TcpServer::RemoveConnectionInLoop(uint64_t id)
@@ -355,27 +423,43 @@ void TcpServer::RemoveConnectionInLoop(uint64_t id)
 }
 
 void TcpServer::SetConnectedCallback(ConnectedCallback cb)
-{ EnsureConfigurable(); _connected_callback = std::move(cb); }
+{
+    EnsureConfigurable();
+    _connected_callback = std::move(cb);
+}
 void TcpServer::SetMessageCallback(MessageCallback cb)
-{ EnsureConfigurable(); _message_callback = std::move(cb); }
+{
+    EnsureConfigurable();
+    _message_callback = std::move(cb);
+}
 void TcpServer::SetClosedCallback(ClosedCallback cb)
-{ EnsureConfigurable(); _closed_callback = std::move(cb); }
+{
+    EnsureConfigurable();
+    _closed_callback = std::move(cb);
+}
 void TcpServer::SetAnyEventCallback(AnyEventCallback cb)
-{ EnsureConfigurable(); _event_callback = std::move(cb); }
+{
+    EnsureConfigurable();
+    _event_callback = std::move(cb);
+}
 void TcpServer::EnableInactiveRelease(int timeout)
 {
     EnsureConfigurable();
-    if (timeout < 1 || timeout > 60) throw std::invalid_argument("inactivity timeout must be 1..60");
+    if (timeout < 1 || timeout > 60)
+        throw std::invalid_argument("inactivity timeout must be 1..60");
     _inactive_timeout = timeout;
     _enable_inactive_release = true;
 }
 
 uint64_t TcpServer::RunAfter(task_t task, int delay)
 {
-    if (!task) throw std::invalid_argument("RunAfter requires a task");
-    if (delay <= 0 || delay > 60) throw std::invalid_argument("delay must be in [1, 60] ticks");
+    if (!task)
+        throw std::invalid_argument("RunAfter requires a task");
+    if (delay <= 0 || delay > 60)
+        throw std::invalid_argument("delay must be in [1, 60] ticks");
     std::lock_guard<std::mutex> lock(_budget->mutex);
-    if (_budget->stopping.load()) throw std::logic_error("server is stopping");
+    if (_budget->stopping.load())
+        throw std::logic_error("server is stopping");
     const auto id = AllocateId();
     _baseloop->QueueInLoopCommitted([this, id, task = std::move(task), delay]() mutable {
         RunAfterInLoop(id, std::move(task), delay);
@@ -385,7 +469,8 @@ uint64_t TcpServer::RunAfter(task_t task, int delay)
 
 void TcpServer::RunAfterInLoop(uint64_t id, task_t task, int delay)
 {
-    if (_budget->stopping.load()) return;
+    if (_budget->stopping.load())
+        return;
     _business_timers.insert(id);
     try
     {
@@ -395,18 +480,29 @@ void TcpServer::RunAfterInLoop(uint64_t id, task_t task, int delay)
             if (!_budget->stopping.load())
             {
                 // TimerTask 在 noexcept 析构中触发回调，必须在此拦截业务异常。
-                try { task(); }
-                catch (...) { HandleException(std::current_exception()); }
+                try
+                {
+                    task();
+                }
+                catch (...)
+                {
+                    HandleException(std::current_exception());
+                }
             }
         });
     }
-    catch (...) { _business_timers.erase(id); throw; }
+    catch (...)
+    {
+        _business_timers.erase(id);
+        throw;
+    }
 }
 
 void TcpServer::CancelTask(uint64_t id)
 {
     std::lock_guard<std::mutex> lock(_budget->mutex);
-    if (_budget->stopping.load()) return;
+    if (_budget->stopping.load())
+        return;
     _baseloop->QueueInLoopCommitted([this, id] {
         _baseloop->TimerCancel(id);
         _business_timers.erase(id);

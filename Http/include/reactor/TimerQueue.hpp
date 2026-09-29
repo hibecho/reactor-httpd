@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "base/FdGuard.hpp"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -80,7 +81,7 @@ class TimerWheel
   private:
     // Eventloop模块监控定时事件
     EventLoop *_loop;                        // EventLoop管理定时器
-    int _timerfd;                            // 定时器描述符：读取计时器，进行定时任务
+    FdGuard _timerfd; // 定时器描述符：读取计时器，进行定时任务，由成员自己负责关闭
     std::unique_ptr<Channel> _timer_channel; // 管理定时器描述符
 
     // 定时器模块

@@ -20,6 +20,7 @@
  */
 
 #pragma once
+#include "base/FdGuard.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -93,5 +94,5 @@ class Socket
     int GetFd() const noexcept;
 
   private:
-    int _sockfd;
+    FdGuard _sockfd; // 独占持有，析构即关闭
 };

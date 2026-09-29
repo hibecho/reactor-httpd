@@ -4,6 +4,11 @@
  *
  * 设计目的:对描述符的事件管理
  *
+ * 所有权:Channel 只借用描述符，从不拥有它。fd 的生命周期由构造时传入方负责
+ * （EventLoop 的 eventfd、TimerWheel 的 timerfd、Socket 的套接字等），因此 _fd
+ * 用裸 int 而不是 FdGuard 表示——FdGuard 会在析构时关闭描述符，那样一来每个
+ * 构造点都会出现两个所有者，重复关闭并可能误关已被内核复用给其它连接的同号描述符。
+ *
  * 接口设计:
  * 1.事件管理
  *   - 描述符是否可读
@@ -33,6 +38,7 @@ class Channel
 
   public:
     /*Channel的构造函数*/
+    // 只借用 fd，不拥有：传入方须保证它在 Channel 存活期间有效，Channel 不关闭它。
     Channel(int fd, EventLoop *loop);
     Channel(const Channel &) = delete;
     Channel &operator=(const Channel &) = delete;
@@ -72,7 +78,7 @@ class Channel
     void Handle();
 
   private:
-    int _fd;                       // 管理的文件描述符
+    int _fd;                       // 借用的描述符：所有权属于传入方，本类不关闭它
     uint32_t _events;              // 设置的事件
     uint32_t _rvents;              // 激活的事件
     EventLoop *_loop;              // 非拥有，_loop 必须比 Channel 活得更久

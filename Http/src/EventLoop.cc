@@ -2,7 +2,10 @@
  * @file EventLoop.cc
  * @brief
  *
- * 创建 eventfd 失败 -> 抛出异常 ->停止 EventLoop 构造，不再创建后面的 Channel
+ * 创建 eventfd 失败 -> 抛出异常 ->停止 EventLoop 构造，不再创建后面的 Channel。
+ *
+ * 构造函数中途抛异常时类自己的析构函数不会执行，只有已构造完成的成员会析构，
+ * 因此 eventfd 由 _event_fd（FdGuard）持有，它的析构就是关闭时机。
  */
 
 #include "reactor/EventLoop.hpp"
@@ -27,7 +30,7 @@
 EventLoop::EventLoop()
     : _thread_id(std::this_thread::get_id())
     , _event_fd(CreateEventfd())
-    , _event_channel(std::make_unique<Channel>(_event_fd, this))
+    , _event_channel(std::make_unique<Channel>(_event_fd.GetFd(), this))
     , _ep(std::make_unique<Epoller>())
     , _tw(std::make_unique<TimerWheel>(this))
 {
@@ -40,11 +43,8 @@ EventLoop::EventLoop()
     _event_channel->EnableRead();
 }
 
-EventLoop::~EventLoop()
-{
-    if (close(_event_fd) < 0)
-        LOG_ERROR("Failed to close event fd");
-}
+// 定义必须留在能看见 Channel/Epoller 完整类型的地方，事件循环自身不再需要清理动作。
+EventLoop::~EventLoop() = default;
 
 void EventLoop::Loop()
 {
@@ -60,24 +60,34 @@ void EventLoop::LoopOnce()
 {
     // 1.等待事件
     std::vector<Channel *> active;
-    try { _ep->WaitEvent(active); }
+    try
+    {
+        _ep->WaitEvent(active);
+    }
     catch (...)
     {
-        if (!_exception_handler) throw;
+        if (!_exception_handler)
+            throw;
         _exception_handler(std::current_exception());
         ExecuteTasks(); // 故障停机仍需处理连接注销和关闭任务。
         return;
     }
+
     // 2.处理就绪事件
     for (Channel *channel : active)
     {
-        try { channel->Handle(); }
+        try
+        {
+            channel->Handle();
+        }
         catch (...)
         {
-            if (!_exception_handler) throw;
+            if (!_exception_handler)
+                throw;
             _exception_handler(std::current_exception());
         }
     }
+
     // 3.执行一批任务
     ExecuteTasks();
 }
@@ -125,8 +135,14 @@ void EventLoop::QueueInLoopCommitted(Task task)
         std::lock_guard<std::mutex> lock(_mutex);
         _tasks.push(std::move(task));
     }
-    try { WeakupEventfd(); }
-    catch (...) { LOG_ERROR("task committed; eventfd wake failed, awaiting timerfd"); }
+    try
+    {
+        WeakupEventfd();
+    }
+    catch (...)
+    {
+        LOG_ERROR("task committed; eventfd wake failed, awaiting timerfd");
+    }
 }
 
 void EventLoop::DrainPendingTasks()
@@ -152,22 +168,26 @@ bool EventLoop::IsInLoopThread() const
 // 取出一批任务，解锁后执行
 void EventLoop::ExecuteTasks()
 {
-    // 线程安全的取出任务
+    // 1.线程安全的取出任务
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_active_tasks.empty())
             _active_tasks.swap(_tasks);
     }
 
-    // 执行任务
+    // 2.执行任务
     while (!_active_tasks.empty())
     {
         Task task = std::move(_active_tasks.front());
         _active_tasks.pop();
-        try { task(); }
+        try
+        {
+            task();
+        }
         catch (...)
         {
-            if (!_exception_handler) throw;
+            if (!_exception_handler)
+                throw;
             _exception_handler(std::current_exception());
         }
     }
@@ -205,7 +225,7 @@ void EventLoop::WeakupEventfd()
 
     while (true)
     {
-        const ssize_t ret = write(_event_fd, &cnt, sizeof(cnt));
+        const ssize_t ret = write(_event_fd.GetFd(), &cnt, sizeof(cnt));
 
         if (ret == static_cast<ssize_t>(sizeof(cnt)))
             return;
@@ -234,7 +254,7 @@ void EventLoop::HandleEventfd()
     uint64_t cnt = 0;
     while (true)
     {
-        const ssize_t ret = read(_event_fd, &cnt, sizeof(cnt));
+        const ssize_t ret = read(_event_fd.GetFd(), &cnt, sizeof(cnt));
 
         if (ret == static_cast<ssize_t>(sizeof(cnt)))
             return;

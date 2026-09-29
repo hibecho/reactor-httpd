@@ -53,6 +53,9 @@ target_link_options(TestLoopThread PRIVATE "LINKER:--wrap=eventfd")
 target_link_options(TestSendLimits PRIVATE
     "LINKER:--wrap=write" "LINKER:--wrap=_ZN6Buffer5WriteEPKvm")
 target_link_options(TestServerStop PRIVATE "LINKER:--wrap=eventfd")
+# Constructor-failure paths: a descriptor opened before a later member throws must still be released.
+target_link_options(TestEventLoop PRIVATE "LINKER:--wrap=timerfd_create")
+target_link_options(TestTimerQueue PRIVATE "LINKER:--wrap=epoll_ctl")
 
 add_executable(TestServerE2E EXCLUDE_FROM_ALL TestServerE2E.cc)
 target_link_libraries(TestServerE2E PRIVATE http_options http_sanitizers Threads::Threads)

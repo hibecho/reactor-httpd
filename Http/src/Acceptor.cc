@@ -1,4 +1,5 @@
 #include "tcp/Acceptor.hpp"
+#include "base/FdGuard.hpp"
 #include "base/Logger.hpp"
 #include "reactor/Channel.hpp"
 #include "reactor/EventLoop.hpp"
@@ -59,21 +60,15 @@ Acceptor::Acceptor(EventLoop *loop, uint16_t port)
         HandleRead();
     });
 
-    _retry_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-    if (_retry_fd < 0)
+    const int retry_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if (retry_fd < 0)
         throw std::system_error(errno, std::generic_category(), "Acceptor timerfd_create");
-    try
-    {
-        _retry_channel = std::make_unique<Channel>(_retry_fd, _loop);
-        _retry_channel->SetReadCallback([this] {
-            HandleRetry();
-        });
-    }
-    catch (...)
-    {
-        close(_retry_fd);
-        throw;
-    }
+    // 从这一行起 fd 由成员负责关闭：后面任何一步抛异常都不会泄漏，不需要手写 try/catch。
+    _retry_fd = FdGuard(retry_fd);
+    _retry_channel = std::make_unique<Channel>(retry_fd, _loop);
+    _retry_channel->SetReadCallback([this] {
+        HandleRetry();
+    });
 }
 
 Acceptor::~Acceptor()
@@ -124,11 +119,8 @@ void Acceptor::StopAccepting()
         _retry_registered = false;
     }
     _listener->Close();
-    if (_retry_fd >= 0)
-    {
-        close(_retry_fd);
-        _retry_fd = -1;
-    }
+    // Close 可重复调用，StopAccepting 允许被多次进入。
+    _retry_fd.Close();
 }
 
 void Acceptor::PauseAccepting()
@@ -137,7 +129,7 @@ void Acceptor::PauseAccepting()
     _accepting = false;
     itimerspec delay{};
     delay.it_value.tv_nsec = 100 * 1000 * 1000; // 100 ms，使用独立的单调时钟。
-    if (timerfd_settime(_retry_fd, 0, &delay, nullptr) < 0)
+    if (timerfd_settime(_retry_fd.GetFd(), 0, &delay, nullptr) < 0)
     {
         const int error = errno;
         StopAccepting();
@@ -154,7 +146,7 @@ void Acceptor::HandleRetry()
     ssize_t count;
     do
     {
-        count = read(_retry_fd, &expirations, sizeof(expirations));
+        count = read(_retry_fd.GetFd(), &expirations, sizeof(expirations));
     } while (count < 0 && errno == EINTR);
     if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         return;

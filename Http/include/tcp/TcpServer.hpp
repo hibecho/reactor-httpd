@@ -42,6 +42,7 @@
 
 #pragma once
 
+#include "base/FdGuard.hpp"
 #include "reactor/TimerQueue.hpp"
 #include "tcp/Connection.hpp"
 #include "tcp/ResourceLimits.hpp"
@@ -144,11 +145,11 @@ class TcpServer
     bool _stop_started = false;
     bool _cleanup_barrier = false;
     std::size_t _cleanup_waiting = 0;
-    int _deadline_fd = -1;
+    FdGuard _deadline_fd;
     std::unique_ptr<Channel> _deadline_channel;
     bool _deadline_registered = false;
     bool _signal_stop = false;
-    int _signal_fd = -1;
+    FdGuard _signal_fd;
     std::unique_ptr<Channel> _signal_channel;
     bool _signal_registered = false;
     bool _signal_mask_saved = false;

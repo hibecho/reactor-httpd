@@ -8,13 +8,14 @@
 // Channel::Remove 之后 fd 不再产生唤醒，此时必须补一个 QueueInLoop 作为独立唤醒源。
 //
 // ~EventLoop 会关闭 _event_fd，文件末尾的 DestructorReleasesFd 据此断言反复构造析构
-// 不会累积描述符。
+// 不会累积描述符；ConstructorFailureReleasesFd 覆盖构造函数中途失败这条路径。
 
 #include "reactor/Channel.hpp"
 #include "reactor/EventLoop.hpp"
 
 #include <dirent.h>
 #include <sys/eventfd.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -27,6 +28,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 
@@ -68,6 +70,22 @@ void ArmWatchdog()
     alarm(5);
 }
 } // namespace
+
+// 链接期故障注入：武装后 timerfd_create 返回 EMFILE，未武装时透传。
+// EventLoop 内部必然构造一个 TimerWheel，因此武装期间构造 EventLoop 会命中
+// "成员初始化列表抛异常" 这条路径。
+static std::atomic<bool> fail_timerfd_create{false};
+
+extern "C" int __real_timerfd_create(clockid_t clockid, int flags);
+extern "C" int __wrap_timerfd_create(clockid_t clockid, int flags)
+{
+    if (fail_timerfd_create.load())
+    {
+        errno = EMFILE;
+        return -1;
+    }
+    return __real_timerfd_create(clockid, flags);
+}
 
 // /proc/self/fd 的计数包含 opendir 自身的描述符，前后都算因而相互抵消，
 // 所以只能做前后相等比较，不能对绝对数值断言。
@@ -295,6 +313,29 @@ static void DestructorReleasesFd()
     CHECK(CountOpenFds() == before);
 }
 
+// TimerWheel 是 EventLoop 的成员，在初始化列表里构造。它抛异常时异常来自初始化列表，
+// ~EventLoop 不会执行——只有已构造完成的成员会析构，eventfd 必须由成员自己负责关闭。
+// 注入 timerfd_create 失败即命中这条路径。
+static void ConstructorFailureReleasesFd()
+{
+    const int before = CountOpenFds();
+
+    fail_timerfd_create.store(true);
+    bool threw = false;
+    try
+    {
+        EventLoop loop;
+    }
+    catch (const std::system_error &)
+    {
+        threw = true;
+    }
+    fail_timerfd_create.store(false);
+
+    CHECK(threw);
+    CHECK(CountOpenFds() == before);
+}
+
 int main()
 {
     try
@@ -311,6 +352,7 @@ int main()
         RemovePath();
         RemoveIsIdentityChecked();
         DestructorReleasesFd();
+        ConstructorFailureReleasesFd();
     }
     catch (const std::exception &e)
     {
@@ -320,6 +362,7 @@ int main()
 
     std::cout << "EventLoop tests passed: 构造与线程归属、同线程立即执行、入队延迟执行、"
                  "跨线程唤醒、批量执行、队列换出语义、事件优先于任务、"
-                 "Channel 登记/修改/移除的转发链路、析构释放 eventfd。\n";
+                 "Channel 登记/修改/移除的转发链路、析构释放 eventfd、"
+                 "构造中途失败时不泄漏 eventfd。\n";
     return 0;
 }

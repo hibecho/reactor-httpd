@@ -4,63 +4,47 @@
  */
 
 #include "tcp/Socket.hpp"
+#include "base/FdGuard.hpp"
 #include "base/Logger.hpp"
 #include <arpa/inet.h>
 #include <cerrno>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <unistd.h>
 
-Socket::Socket()
-    : _sockfd(-1)
-{
-}
+// 描述符由 FdGuard 独占持有，默认构造、移动与析构都直接复用它的语义：
+// 未持有时为 -1，移动后源对象自动置为未持有，析构即关闭。
+Socket::Socket() = default;
 
 Socket::Socket(int fd)
     : _sockfd(fd)
 {
 }
 
-Socket::Socket(Socket &&other) noexcept
-    : _sockfd(other._sockfd)
-{
-    other._sockfd = -1;
-}
+Socket::Socket(Socket &&other) noexcept = default;
 
-Socket &Socket::operator=(Socket &&other) noexcept
-{
-    if (this != &other)
-    {
-        Close();
-        _sockfd = other._sockfd;
-        other._sockfd = -1;
-    }
-    return *this;
-}
+Socket &Socket::operator=(Socket &&other) noexcept = default;
 
-Socket::~Socket()
-{
-    Close();
-}
+Socket::~Socket() = default;
 
 // 创建套接字
 bool Socket::Create()
 {
-    if (_sockfd != -1)
+    if (_sockfd.Valid())
     {
         errno = EALREADY;
         return false;
     }
     // 获取监听套接字
     //  int socket(int domain, int type, int protocol);
-    _sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (_sockfd < 0)
+    const int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0)
     {
         const int saved_errno = errno;
         LOG_ERROR("Failed to create socket:errno={}", saved_errno);
         errno = saved_errno;
         return false;
     }
+    _sockfd = FdGuard(fd);
     return true;
 }
 
@@ -82,7 +66,7 @@ bool Socket::Bind(const std::string &ip_address, uint16_t port)
         return false;
     }
     socklen_t address_length = sizeof(socket_address);
-    if (bind(_sockfd, reinterpret_cast<sockaddr *>(&socket_address), address_length) == -1)
+    if (bind(_sockfd.GetFd(), reinterpret_cast<sockaddr *>(&socket_address), address_length) == -1)
     {
         // 绑定套接字失败
         const int saved_errno = errno;
@@ -97,7 +81,7 @@ bool Socket::Bind(const std::string &ip_address, uint16_t port)
 bool Socket::Listen(int backlog)
 {
     // int listen(int sockfd, int backlog);
-    int ret = listen(_sockfd, backlog);
+    int ret = listen(_sockfd.GetFd(), backlog);
     if (ret == -1)
     {
         // 监听套接字失败
@@ -124,7 +108,7 @@ bool Socket::Connect(const std::string &ip_address, uint16_t port)
         return false;
     }
     socklen_t address_length = sizeof(socket_address);
-    if (connect(_sockfd, reinterpret_cast<sockaddr *>(&socket_address), address_length) == -1)
+    if (connect(_sockfd.GetFd(), reinterpret_cast<sockaddr *>(&socket_address), address_length) == -1)
     {
         // 连接套接字失败
         const int saved_errno = errno;
@@ -145,7 +129,7 @@ int Socket::Accept(sockaddr *peer_address, socklen_t *peer_address_length)
 {
     while (true)
     {
-        int client_fd = accept(_sockfd, peer_address, peer_address_length);
+        int client_fd = accept(_sockfd.GetFd(), peer_address, peer_address_length);
         if (client_fd >= 0)
         {
             return client_fd;
@@ -168,7 +152,7 @@ ssize_t Socket::Recv(void *buffer, size_t length, int flags)
 {
     while (true)
     {
-        const ssize_t received = recv(_sockfd, buffer, length, flags);
+        const ssize_t received = recv(_sockfd.GetFd(), buffer, length, flags);
         if (received >= 0)
         {
             return received;
@@ -181,7 +165,7 @@ ssize_t Socket::Recv(void *buffer, size_t length, int flags)
 
         if (error != EAGAIN && error != EWOULDBLOCK)
         {
-            LOG_ERROR("Failed to receive data: fd={}, errno={}", _sockfd, error);
+            LOG_ERROR("Failed to receive data: fd={}, errno={}", _sockfd.GetFd(), error);
         }
         // 日志内部可能调用其他库函数或系统调用，从而改变 errno，因此返回前需要恢复
         errno = error;
@@ -200,7 +184,7 @@ ssize_t Socket::Send(const void *buf, size_t len, int flag)
 {
     while (true)
     {
-        ssize_t n = send(_sockfd, buf, len, flag | MSG_NOSIGNAL);
+        ssize_t n = send(_sockfd.GetFd(), buf, len, flag | MSG_NOSIGNAL);
         // 返回实际发送字节数
         if (n >= 0)
         {
@@ -231,14 +215,7 @@ ssize_t Socket::NonBlockSend(const void *buf, size_t len)
 // 关闭后可重复调用；保留调用前 errno，不对 close 的 EINTR 重试。
 void Socket::Close() noexcept
 {
-    if (_sockfd != -1)
-    {
-        const int saved_errno = errno;
-        const int fd = _sockfd;
-        _sockfd = -1;
-        close(fd);
-        errno = saved_errno;
-    }
+    _sockfd.Close();
 }
 
 // 创建非阻塞监听套接字，失败释放本次创建的资源并保留 errno。
@@ -271,8 +248,8 @@ bool Socket::CreateClient(uint16_t port, const std::string &ip)
 bool Socket::ReuseAddress()
 {
     const int opt = 1;
-    if (setsockopt(_sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1 ||
-        setsockopt(_sockfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1)
+    if (setsockopt(_sockfd.GetFd(), SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1 ||
+        setsockopt(_sockfd.GetFd(), SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1)
     {
         const int saved_errno = errno;
         LOG_ERROR("Failed to enable address reuse: errno={}", saved_errno);
@@ -285,8 +262,8 @@ bool Socket::ReuseAddress()
 // 保留原有状态标志，增加非阻塞属性。
 bool Socket::SetNonBlock()
 {
-    const int flags = fcntl(_sockfd, F_GETFL, 0);
-    if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == -1)
+    const int flags = fcntl(_sockfd.GetFd(), F_GETFL, 0);
+    if (flags == -1 || fcntl(_sockfd.GetFd(), F_SETFL, flags | O_NONBLOCK) == -1)
     {
         const int saved_errno = errno;
         LOG_ERROR("Failed to set nonblocking mode: errno={}", saved_errno);
@@ -299,5 +276,5 @@ bool Socket::SetNonBlock()
 // 借用描述符，不转移所有权。
 int Socket::GetFd() const noexcept
 {
-    return _sockfd;
+    return _sockfd.GetFd();
 }

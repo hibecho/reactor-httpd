@@ -15,17 +15,22 @@
 //
 // 真实时间用例每次 LoopOnce() 必定被唤醒：timerfd 是 1 秒周期的周期定时器，
 // 即便没有任何任务到期待处理也每秒产生一次 EPOLLIN，因此不需要额外的唤醒源。
+//
+// 故障用例 ConstructorFailureReleasesTimerfd 用链接期 --wrap=epoll_ctl 注入登记失败，
+// 覆盖构造函数抛出、~TimerWheel 不执行时 timerfd 仍要释放这条路径。
 
 #include "reactor/Channel.hpp"
 #include "reactor/EventLoop.hpp"
 #include "reactor/TimerQueue.hpp"
 
 #include <dirent.h>
+#include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
@@ -34,6 +39,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <type_traits>
 
 static_assert(!std::is_copy_constructible<TimerWheel>::value, "TimerWheel owns its timerfd");
@@ -75,6 +81,21 @@ void ArmWatchdog()
     alarm(30);
 }
 } // namespace
+
+// 链接期故障注入：武装后 epoll_ctl 返回 EINVAL，未武装时透传。
+// 用于命中 "TimerWheel 构造函数体内登记失败" 这条路径。
+static std::atomic<bool> fail_epoll_ctl{false};
+
+extern "C" int __real_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+extern "C" int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
+{
+    if (fail_epoll_ctl.load())
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    return __real_epoll_ctl(epfd, op, fd, event);
+}
 
 // /proc/self/fd 的计数包含 opendir 自身的描述符，前后都算因而相互抵消，
 // 所以只能做前后相等比较，不能对绝对数值断言。
@@ -331,6 +352,30 @@ static void DestructorReleasesTimerfd()
     CHECK(CountOpenFds() == before);
 }
 
+// TimerWheel 构造函数体内登记 timerfd 失败会抛异常，此时 ~TimerWheel 不会执行，
+// timerfd 必须由成员自己负责关闭。
+// 注入 epoll_ctl 失败即命中这条路径（EnableRead -> EventLoop::UpdateEvent -> Epoller::AddEvent）。
+static void ConstructorFailureReleasesTimerfd()
+{
+    EventLoop loop; // 先正常构造，武装只覆盖随后的 TimerWheel 构造
+    const int before = CountOpenFds();
+
+    fail_epoll_ctl.store(true);
+    bool threw = false;
+    try
+    {
+        TimerWheel wheel(&loop);
+    }
+    catch (const std::system_error &)
+    {
+        threw = true;
+    }
+    fail_epoll_ctl.store(false);
+
+    CHECK(threw);
+    CHECK(CountOpenFds() == before);
+}
+
 // ~TimerWheel 必须把 timerfd 的 Channel 从 Epoller 摘除。
 // 析构释放的 fd 号会被内核复用给下一个 timerfd；若残留陈旧登记，
 // 新 Channel 登记时会因身份不符而被 Epoller 拒绝。
@@ -438,6 +483,7 @@ int main()
         IndexSurvivesOldTaskCleanup();
         DestructorCancelsPendingTasks();
         DestructorReleasesTimerfd();
+        ConstructorFailureReleasesTimerfd();
         DestructorUnregistersChannel();
         LoopDrivenExpiry();
         LoopDrivenCancel();
@@ -452,7 +498,7 @@ int main()
 
     std::cout << "TimerQueue tests passed: 到期槽位、timeout 上下界归一、刻度回绕、"
                  "取消、刷新重算、重复添加（到期后重加与按 id 重启）、旧任务清理后索引仍可用、"
-                 "析构取消待触发任务、析构释放 timerfd、"
+                 "析构取消待触发任务、析构释放 timerfd、构造中途失败时不泄漏 timerfd、"
                  "析构摘除 Epoller 登记、timerfd 集成、Cancel/Refresh 转发、落后补偿。\n";
     return 0;
 }

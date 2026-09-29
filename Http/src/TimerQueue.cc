@@ -69,7 +69,7 @@ TimerTask::~TimerTask()
 TimerWheel::TimerWheel(EventLoop *loop)
     : _loop(loop)
     , _timerfd(CreateTimerfd())
-    , _timer_channel(std::make_unique<Channel>(_timerfd, _loop))
+    , _timer_channel(std::make_unique<Channel>(_timerfd.GetFd(), _loop))
     , _tick(0)
     , _capacity(60)
     , _wheel(_capacity)
@@ -93,6 +93,7 @@ TimerWheel::~TimerWheel()
     // → _release() 访问仍有效的 _timers
     // → 析构函数体结束
     // → 自动析构 _timers 和已清空的 _wheel
+    // → 成员按声明逆序析构，_timer_channel 先于 _timerfd，fd 随后由 FdGuard 关闭
 
     for (auto &slot : _wheel)
     {
@@ -110,9 +111,8 @@ TimerWheel::~TimerWheel()
     // 构造函数末尾的 EnableRead() 保证了它已登记，因此这里不会抛。
     _timer_channel->Remove();
 
-    // 关闭 timerfd，否则每次构造都泄漏一个描述符
-    if (close(_timerfd) < 0)
-        LOG_ERROR("Failed to close timer fd");
+    // timerfd 由 _timerfd（FdGuard）持有，这里不需要显式关闭；
+    // 构造函数中途抛异常时同样如此，~TimerWheel 不执行但成员照样析构。
 }
 
 void TimerWheel::TimerAdd(uint64_t id, uint32_t timeout, task_t cb)
@@ -288,7 +288,7 @@ uint64_t TimerWheel::ReadTimerfd()
     uint64_t times = 0;
     while (true)
     {
-        const ssize_t ret = read(_timerfd, &times, sizeof(times));
+        const ssize_t ret = read(_timerfd.GetFd(), &times, sizeof(times));
 
         if (ret == static_cast<ssize_t>(sizeof(times)))
             return times;

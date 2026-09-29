@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "base/FdGuard.hpp"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -74,7 +75,7 @@ class Acceptor
     bool _accepting = false;
     bool _stopped = false;
     // 构造时预先分配，EMFILE 后不再需要申请描述符。
-    int _retry_fd = -1;
+    FdGuard _retry_fd;
     std::unique_ptr<Channel> _retry_channel;
     bool _retry_registered = false;
 };
