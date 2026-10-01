@@ -11,6 +11,7 @@
  */
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,6 +42,10 @@ class HttpStreamWriter : public std::enable_shared_from_this<HttpStreamWriter>
     // 结束响应：分块编码下补终止块；keep_alive 为 false 时关闭连接。幂等。
     bool Finish();
 
+    // 结束回调，Finish() 生效的那一次触发一次。协议层用它复位连接状态、续解析同一
+    // 连接上已经到达的后续请求。回调在调用 Finish 的线程上执行。
+    void SetFinishHandler(std::function<void()> handler) { _on_finish = std::move(handler); }
+
     // 还能不能继续写。任一次写失败之后恒为 false。
     bool IsWritable() const noexcept;
     bool Started() const noexcept;
@@ -53,4 +58,5 @@ class HttpStreamWriter : public std::enable_shared_from_this<HttpStreamWriter>
     bool _started = false;
     bool _finished = false;
     bool _writable = true;
+    std::function<void()> _on_finish;
 };

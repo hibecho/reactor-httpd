@@ -14,6 +14,7 @@
  * owner，导致连接在业务线程上析构。
  */
 #pragma once
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -45,10 +46,15 @@ class HttpResponder : public std::enable_shared_from_this<HttpResponder>
     // 是否已经产生过响应（Send 或 BeginStream）。
     bool Done() const noexcept { return _done; }
 
+    // 响应彻底结束（Send 发完，或流被 Finish）时触发一次。协议层用它复位连接状态、
+    // 续解析同一连接上已经到达的后续请求。不复用连接时不触发——那条连接要关了。
+    void SetFinishHandler(std::function<void()> handler) { _on_finish = std::move(handler); }
+
   private:
     std::weak_ptr<Connection> _conn;
     std::string _version;
     bool _head_request;
     bool _keep_alive;
     bool _done = false;
+    std::function<void()> _on_finish;
 };

@@ -207,9 +207,9 @@ void ScenarioIncrementalDelivery()
         assert(ReadChunk(fd) == "data: two\n\n");
         assert(ReadChunk(fd).empty()); // 终止块
 
-        // M1 的流式响应一律 close 语义
-        char trailing = 0;
-        assert(recv(fd, &trailing, 1, 0) == 0);
+        // 请求是 HTTP/1.1 keep-alive，流发完后连接应当留着（复用行为见
+        // ScenarioKeepAliveReuse，这里只确认头部的意图与之一致）
+        assert(head.keep_alive);
         close(fd);
         server.Stop();
     });
@@ -245,6 +245,115 @@ void ScenarioEmptyWriteIsNoop()
         // 只有一块 payload，空写入没有插进来把流截断
         assert(ReadChunk(fd) == "payload");
         assert(ReadChunk(fd).empty());
+        close(fd);
+        server.Stop();
+    });
+    server.Start();
+    driver.join();
+    alarm(0);
+}
+
+// 流结束之后同一条连接要能继续用。
+//
+// 两个请求【一次性流水线发出】：第二个在流还没写完时就已经躺在连接的输入缓冲里了。
+// 因此它不可能靠「再来一次读事件」被处理——只能靠流结束后协议层主动复位并重新解析。
+// 少了那一步，这里会卡到 recv 超时。
+void ScenarioKeepAliveReuse()
+{
+    g_stage = "keep-alive";
+    alarm(30);
+
+    std::atomic<bool> release{false};
+
+    HttpServer server(0);
+    server.AddAsyncRoute(
+        "GET", "/stream", [&release](const HttpRequest &, const std::shared_ptr<HttpResponder> &reply) {
+            auto writer = reply->BeginStream(HttpResponse(200));
+            assert(writer != nullptr);
+            assert(writer->Write("part"));
+
+            // 等客户端确认拿到第一块再收尾，保证第二个请求确实是在流进行中发出的
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (!release.load() && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            assert(release.load());
+
+            assert(writer->Finish());
+        });
+    server.AddRoute("GET", "/plain", [](const HttpRequest &, HttpResponse &response) {
+        response.SetBody("plain");
+    });
+    server.SetBusinessThreadCount(2);
+    const uint16_t port = server.GetPort();
+
+    std::thread driver([&] {
+        const int fd = Connect(port);
+
+        // 流水线：两条请求一次发出
+        Send(fd, Request("GET", "/stream") + Request("GET", "/plain"));
+
+        const Head first = ReadHead(fd);
+        assert(first.status == 200);
+        assert(first.chunked);
+        assert(first.keep_alive);
+        assert(ReadChunk(fd) == "part");
+
+        release.store(true);
+        assert(ReadChunk(fd).empty()); // 终止块
+
+        // 第二个请求此前一直躺在输入缓冲里，靠流结束时的续解析才被处理
+        const Head second = ReadHead(fd);
+        assert(second.status == 200);
+        assert(!second.chunked);
+        assert(second.has_content_length);
+        std::string body(5, '\0');
+        ReadExact(fd, body.data(), body.size());
+        assert(body == "plain");
+
+        close(fd);
+        server.Stop();
+    });
+    server.Start();
+    driver.join();
+    alarm(0);
+}
+
+// HTTP/1.0 不认识分块编码：正文原样写出，由关闭连接界定结束
+void ScenarioHttp10CloseDelimited()
+{
+    g_stage = "http10";
+    alarm(30);
+
+    HttpServer server(0);
+    server.AddAsyncRoute("GET", "/legacy", [](const HttpRequest &, const std::shared_ptr<HttpResponder> &reply) {
+        auto writer = reply->BeginStream(HttpResponse(200));
+        assert(writer != nullptr);
+        assert(writer->Write("abc"));
+        assert(writer->Write("def"));
+        assert(writer->Finish());
+    });
+    server.SetBusinessThreadCount(2);
+    const uint16_t port = server.GetPort();
+
+    std::thread driver([&] {
+        const int fd = Connect(port);
+        // 即便 HTTP/1.0 的请求显式要了 keep-alive，也无法复用——正文长度不可知，
+        // 只能靠关闭连接界定
+        Send(fd, Request("GET", "/legacy", "HTTP/1.0"));
+
+        const Head head = ReadHead(fd);
+        assert(head.status == 200);
+        assert(!head.chunked);
+        assert(!head.has_content_length);
+        assert(!head.keep_alive);
+
+        std::string body;
+        char buffer[64];
+        ssize_t count = 0;
+        while ((count = recv(fd, buffer, sizeof(buffer), 0)) > 0)
+            body.append(buffer, static_cast<std::size_t>(count));
+        assert(body == "abcdef");
+
         close(fd);
         server.Stop();
     });
@@ -353,6 +462,8 @@ int main()
 
     ScenarioIncrementalDelivery();
     ScenarioEmptyWriteIsNoop();
+    ScenarioKeepAliveReuse();
+    ScenarioHttp10CloseDelimited();
     ScenarioNoResponseFallback();
     ScenarioSingleResponse();
     ScenarioHandlerThrows();

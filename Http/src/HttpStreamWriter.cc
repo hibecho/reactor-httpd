@@ -108,6 +108,13 @@ bool HttpStreamWriter::Finish()
     {
         conn->ShutDown();
     }
+
+    // 复用连接的场合下协议层要复位状态、续解析已经到达的后续请求；
+    // 不复用的连接交给 ShutDown，不需要再通知。
+    if (_keep_alive && _on_finish)
+    {
+        _on_finish();
+    }
     return ok;
 }
 

@@ -3,6 +3,7 @@
 #include "base/Util.hpp"
 #include "protocol/HttpContext.hpp"
 #include "protocol/HttpResponder.hpp"
+#include "reactor/EventLoop.hpp"
 #include "thread/BusinessThreadPool.hpp"
 
 #include <fstream>
@@ -20,6 +21,18 @@ void SetErrorBody(HttpResponse &response, int status)
     response.SetStatus(status);
     response.SetBody(std::string(Util::StatusDescription(status)) + "\n");
 }
+
+// 每连接的协议状态。
+//
+// busy 表示这条连接上有一条异步/流式响应正在写。期间不能再解析后续请求——否则会在
+// 同一条连接上写出两份响应，报文边界就乱了。响应结束（或连接关闭）时清掉。
+//
+// 之所以把 context 一起装进来而不是各存一份：两者生命周期完全一致，分开存迟早会漂移。
+struct ConnState
+{
+    HttpContext context;
+    bool busy = false;
+};
 } // namespace
 
 HttpServer::HttpServer(uint16_t port)
@@ -154,18 +167,22 @@ void HttpServer::EnableSignalStop()
 
 void HttpServer::OnConnected(const ConnectionPtr &conn)
 {
-    conn->SetContext(HttpContext{});
+    conn->SetContext(ConnState{});
 }
 
 void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
 {
-    // 1.获取上下文， 失败 → 抛 logic_error
-    HttpContext *context = std::any_cast<HttpContext>(&conn->GetContext());
-    if (context == nullptr)
+    // 1.获取协议状态， 失败 → 抛 logic_error
+    ConnState *state = std::any_cast<ConnState>(&conn->GetContext());
+    if (state == nullptr)
         throw std::logic_error("HttpServer: missing HTTP context");
+    HttpContext *context = &state->context;
 
     // 2. 每一轮，消化一个完整请求
-    while (conn->CanProcessInput())
+    //
+    // busy 时不再解析：连接上有一条流正在写，这时若处理下一个请求，两份响应会交织在
+    // 同一条连接上。流结束后由 OnAsyncFinished 清掉 busy 并重新进入这里。
+    while (!state->busy && conn->CanProcessInput())
     {
         // 3.请求不完整，直接返回
         const auto result = context->Parse(*buffer);
@@ -184,14 +201,13 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
         // 5.获得完整请求
         const auto &request = context->GetRequest();
 
-        // 6.异步/流式路由：响应由 handler 自己负责发送，不走下面的序列化路径
-        //
-        // 当前限制：命中之后本轮就此结束，不复位上下文、也不解析同一连接上的后续请求——
-        // 流式响应一律按 close 语义处理。连接复用留到后续里程碑。
+        // 6.异步/流式路由：响应由 handler 自己负责发送，不走下面的序列化路径。
+        //   置 busy 挡住后续请求，等响应结束由 OnAsyncFinished 恢复解析。
         const auto async = _async_routes.find({request.GetMethod(), request.GetPath()});
         if (async != _async_routes.end())
         {
-            RespondAsync(conn, request, async->second);
+            state->busy = true;
+            RespondAsync(conn, request, async->second, buffer);
             return;
         }
 
@@ -233,10 +249,25 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
     }
 }
 
-void HttpServer::RespondAsync(const ConnectionPtr &conn, const HttpRequest &request, const AsyncHandler &handler)
+void HttpServer::RespondAsync(const ConnectionPtr &conn, const HttpRequest &request, const AsyncHandler &handler,
+                              Buffer *buffer)
 {
+    // 复用与否交给请求本身决定：HTTP/1.0 的请求不会要求 keep-alive，而 BeginStream 在
+    // 分块不可用时也会把复用关掉（那种情况只能靠关闭连接界定正文）。
+    const bool keep_alive = request.IsKeepAlive();
     auto responder = std::make_shared<HttpResponder>(conn, request.GetVersion(), request.GetMethod() == "HEAD",
-                                                     /*keep_alive=*/false);
+                                                     keep_alive);
+
+    // 响应结束后回连接所属的循环线程复位状态、并续解析已经到达的后续请求。
+    // 必须在循环线程上做——这里会被业务线程调用，跨线程直接碰连接状态是数据竞争。
+    responder->SetFinishHandler([this, weak = std::weak_ptr<Connection>(conn), buffer]() {
+        ConnectionPtr locked = weak.lock();
+        if (!locked)
+            return;
+        locked->GetLoop()->RunInLoop([this, conn = std::move(locked), buffer]() {
+            OnAsyncFinished(conn, buffer);
+        });
+    });
 
     // request 的引用指向解析上下文，那个上下文在本轮结束时就地复用了，所以必须拷贝一份
     // 交给业务线程长期持有。
@@ -291,6 +322,21 @@ void HttpServer::RespondAsync(const ConnectionPtr &conn, const HttpRequest &requ
     // 没有业务线程：在事件循环线程上内联执行。只适合立刻返回的 handler，
     // 阻塞式 handler 会连带把自己写出的数据也堵在输出缓冲里发不出去。
     task();
+}
+
+void HttpServer::OnAsyncFinished(const ConnectionPtr &conn, Buffer *buffer)
+{
+    ConnState *state = std::any_cast<ConnState>(&conn->GetContext());
+    if (state == nullptr)
+        return;
+
+    state->busy = false;
+    state->context.Reset();
+
+    // 流跑的时候客户端可能已经把下一个请求发过来了（流水线），也可能就躺在缓冲区里。
+    // 这里补一次解析；没有残留数据时直接返回，等下一条请求的读事件即可。
+    if (conn->CanProcessInput() && buffer != nullptr && buffer->GetReadableSize() > 0)
+        OnMessage(conn, buffer);
 }
 
 void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) const

@@ -101,7 +101,10 @@ class HttpServer
     // 收尾：定版本/连接头/发送/关闭【碰网络】
     void SendResponse(const ConnectionPtr &conn, const HttpRequest &request, HttpResponse &response);
     // 异步/流式路由的执行入口：建 responder、调 handler、兜底补响应【碰网络】
-    void RespondAsync(const ConnectionPtr &conn, const HttpRequest &request, const AsyncHandler &handler);
+    void RespondAsync(const ConnectionPtr &conn, const HttpRequest &request, const AsyncHandler &handler,
+                      Buffer *buffer);
+    // 一条异步/流式响应结束之后，回循环线程复位状态并续解析残留请求
+    void OnAsyncFinished(const ConnectionPtr &conn, Buffer *buffer);
 
   private:
     using RouteKey = std::pair<std::string, std::string>;

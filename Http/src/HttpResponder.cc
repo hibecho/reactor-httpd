@@ -28,7 +28,12 @@ bool HttpResponder::Send(HttpResponse response)
     }
 
     response.SetClose(!_keep_alive);
-    return conn->Send(response.Serialize(_head_request));
+    const bool sent = conn->Send(response.Serialize(_head_request));
+    if (_keep_alive && _on_finish)
+    {
+        _on_finish();
+    }
+    return sent;
 }
 
 std::shared_ptr<HttpStreamWriter> HttpResponder::BeginStream(HttpResponse head)
@@ -49,6 +54,7 @@ std::shared_ptr<HttpStreamWriter> HttpResponder::BeginStream(HttpResponse head)
     head.SetClose(!_keep_alive);
 
     auto writer = std::make_shared<HttpStreamWriter>(_conn, chunked, _keep_alive);
+    writer->SetFinishHandler(_on_finish);
     if (!writer->Begin(head))
     {
         return nullptr;
