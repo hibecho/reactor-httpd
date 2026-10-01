@@ -90,6 +90,17 @@ class HttpRequest
     // 将 data 指定的字节追加到正文，支持分批接收；保存内容时需复制，不持有该视图。
     void AppendBody(std::string_view data);
 
+    // 路径参数：路由匹配时由服务器注入。模式 /api/session/:id/history 命中
+    // /api/session/abc/history 时，id 的值就是 "abc"。
+    //
+    // 与查询参数分开存放：两者来源与语义都不同（一个来自路径段，一个来自 ? 之后），
+    // 混进同一个容器迟早会在撞名时给出错误答案。
+    void SetPathParam(std::string name, std::string value);
+    // 判断名为 name 的路径参数是否存在。
+    bool FindPathParam(const std::string &name) const;
+    // 获取名为 name 的路径参数值，返回字符串副本；不存在时返回空字符串。
+    std::string GetPathParam(const std::string &name) const;
+
     // 根据 HTTP 版本和 Connection 请求头判断连接复用意图；最终是否关闭由服务器决定。
     bool IsKeepAlive() const;
     // 清空本次请求的所有数据，为处理下一条请求做准备。
@@ -104,7 +115,8 @@ class HttpRequest
     std::string _query;   // 提取 ? 后面的原始查询字符串，且不包含 ?
     std::string _version; // HTTP 协议版本
 
-    Headers _headers;  // 请求头字段，按插入顺序保存，允许同名重复
-    Params _params;    // 将查询字符串拆分后得到的名称和值
-    std::string _body; // 存储空行后面的正文
+    Headers _headers;     // 请求头字段，按插入顺序保存，允许同名重复
+    Params _params;       // 将查询字符串拆分后得到的名称和值
+    Params _path_params;  // 路由匹配时注入的路径段参数
+    std::string _body;    // 存储空行后面的正文
 };

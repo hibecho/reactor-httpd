@@ -91,9 +91,24 @@ class HttpResponse
     // 生成完整报文；HEAD 请求仅输出状态行和响应头。
     std::string Serialize(bool head_request = false) const;
 
+    // 只生成状态行与响应头，不含正文——流式响应用：先把它发出去，正文随后由
+    // HttpStreamWriter 分块追加。
+    //
+    // chunked=true 时输出 Transfer-Encoding: chunked 并省略 Content-Length。
+    // chunked=false 时两者都不输出：正文长度要到最后才知道，属 HTTP/1.0 的
+    // close-delimited 语义，只能靠关闭连接界定结束，调用方必须保证此时 _close 为 true。
+    //
+    // 与 Serialize 共用头字段的过滤规则，公共部分逐字节一致。
+    std::string SerializeHead(bool chunked) const;
+
   private:
     // 以插入顺序保存响应头，允许同名字段重复出现。
     using Headers = std::vector<std::pair<std::string, std::string>>;
+
+    // 输出调用方设置的头字段，跳过由本类统一生成的字段（Content-Length、Connection、
+    // 重定向时的 Location），以及流式响应下必须由本类决定的 Transfer-Encoding。
+    // Serialize 与 SerializeHead 共用，避免两处的过滤规则各自漂移。
+    void AppendUserFields(std::string &out, bool streaming) const;
 
     // 该状态码是否禁止携带正文：1xx、204、205、304。
     static bool IsBodyForbidden(int status);
