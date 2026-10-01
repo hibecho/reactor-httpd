@@ -2,6 +2,8 @@
 #include "base/Logger.hpp"
 #include "base/Util.hpp"
 #include "protocol/HttpContext.hpp"
+#include "protocol/HttpResponder.hpp"
+#include "thread/BusinessThreadPool.hpp"
 
 #include <fstream>
 #include <new>
@@ -46,6 +48,14 @@ void HttpServer::SetThreadCount(int count)
     _server.SetThreadCount(count);
 }
 
+void HttpServer::SetBusinessThreadCount(int count)
+{
+    EnsureConfigurable();
+    if (count < 0)
+        throw std::invalid_argument("HttpServer: business thread count must not be negative");
+    _business_threads = static_cast<std::size_t>(count);
+}
+
 void HttpServer::EnableInactiveRelease(int timeout)
 {
     EnsureConfigurable();
@@ -54,10 +64,10 @@ void HttpServer::EnableInactiveRelease(int timeout)
     _server.EnableInactiveRelease(timeout);
 }
 
-void HttpServer::AddRoute(std::string method, std::string path, Handler handler)
+// 两张路由表共用的注册前校验。handler_ok 由调用方判断（两种 handler 类型不同）。
+static void ValidateRoute(const std::string &method, const std::string &path, bool handler_ok)
 {
-    EnsureConfigurable();
-    if (!Util::IsToken(method) || !handler || path.empty() ||
+    if (!Util::IsToken(method) || !handler_ok || path.empty() ||
         (path.front() != '/' && !(method == "OPTIONS" && path == "*")))
         throw std::invalid_argument("HttpServer: invalid route");
     for (unsigned char ch : path)
@@ -65,9 +75,27 @@ void HttpServer::AddRoute(std::string method, std::string path, Handler handler)
         if (ch < 0x20 || ch == 0x7f)
             throw std::invalid_argument("HttpServer: control character in route path");
     }
+}
+
+void HttpServer::AddRoute(std::string method, std::string path, Handler handler)
+{
+    EnsureConfigurable();
+    ValidateRoute(method, path, static_cast<bool>(handler));
     // path 已解码，字面量 '?' 或 '#' 也可能来自 %3F/%23，不能再拆查询串。
     if (!_routes.emplace(RouteKey{std::move(method), std::move(path)}, std::move(handler)).second)
         throw std::invalid_argument("HttpServer: duplicate route");
+}
+
+void HttpServer::AddAsyncRoute(std::string method, std::string path, AsyncHandler handler)
+{
+    EnsureConfigurable();
+    ValidateRoute(method, path, static_cast<bool>(handler));
+
+    // 两张表不能重名：同名的方法+路径只允许有一个归属，否则命中哪张表取决于实现顺序
+    const RouteKey key{std::move(method), std::move(path)};
+    if (_routes.count(key) != 0 || _async_routes.count(key) != 0)
+        throw std::invalid_argument("HttpServer: duplicate route");
+    _async_routes.emplace(key, std::move(handler));
 }
 
 void HttpServer::SetDocumentRoot(std::filesystem::path root)
@@ -85,7 +113,20 @@ void HttpServer::Start()
     EnsureConfigurable();
     // 即使底层启动抛异常也不允许再次启动部分初始化过的服务器。
     _started = true;
+
+    // 业务线程要赶在开始受理请求之前就位
+    if (_business_threads > 0)
+        _business = std::make_unique<BusinessThreadPool>(_business_threads);
+
     _server.Start();
+
+    // Start 返回意味着所有连接已被强制关闭、业务线程手上的连接也都失效了
+    // （IsWritable 早已转为 false，不会再写数据），这时候回收最干净。
+    if (_business)
+    {
+        _business->Stop();
+        _business.reset();
+    }
 }
 
 void HttpServer::Stop()
@@ -143,15 +184,26 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
         // 5.获得完整请求
         const auto &request = context->GetRequest();
 
-        // 6.构造正常响应
+        // 6.异步/流式路由：响应由 handler 自己负责发送，不走下面的序列化路径
+        //
+        // 当前限制：命中之后本轮就此结束，不复位上下文、也不解析同一连接上的后续请求——
+        // 流式响应一律按 close 语义处理。连接复用留到后续里程碑。
+        const auto async = _async_routes.find({request.GetMethod(), request.GetPath()});
+        if (async != _async_routes.end())
+        {
+            RespondAsync(conn, request, async->second);
+            return;
+        }
+
+        // 7.构造正常响应
         HttpResponse response;
 
-        // 7.设置响应结束不关闭连接
+        // 8.设置响应结束不关闭连接
         response.SetClose(false);
 
         try
         {
-            // 8.根据request进行查找路由表，构造响应向客户端发送
+            // 9.根据request进行查找路由表，构造响应向客户端发送
             Dispatch(request, response);
         }
         catch (const std::bad_alloc &)
@@ -172,13 +224,73 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
             SetErrorBody(response, 500);
         }
 
-        // 9.序列化及 Send 不在业务异常捕获范围内，避免发送失败后重复生成响应。
+        // 10.序列化及 Send 不在业务异常捕获范围内，避免发送失败后重复生成响应。
         SendResponse(conn, request, response);
         if (response.IsClose())
             return;
-        // 10.清空上下文
+        // 11.清空上下文
         context->Reset();
     }
+}
+
+void HttpServer::RespondAsync(const ConnectionPtr &conn, const HttpRequest &request, const AsyncHandler &handler)
+{
+    auto responder = std::make_shared<HttpResponder>(conn, request.GetVersion(), request.GetMethod() == "HEAD",
+                                                     /*keep_alive=*/false);
+
+    // request 的引用指向解析上下文，那个上下文在本轮结束时就地复用了，所以必须拷贝一份
+    // 交给业务线程长期持有。
+    HttpRequest owned = request;
+
+    auto task = [handler, owned = std::move(owned), responder]() mutable {
+        auto fallback = [&responder](int status) {
+            HttpResponse response(status);
+            SetErrorBody(response, status);
+            responder->Send(std::move(response));
+        };
+
+        try
+        {
+            handler(owned, responder);
+        }
+        catch (const std::exception &error)
+        {
+            // 业务线程上不能像同步路径那样把 bad_alloc 继续往上抛——那会一路逃出
+            // 线程入口函数触发 std::terminate。这里统一兜成 500。
+            LOG_ERROR("HTTP async handler failed: {}", error.what());
+            fallback(500);
+            return;
+        }
+        catch (...)
+        {
+            LOG_ERROR("HTTP async handler failed: unknown exception");
+            fallback(500);
+            return;
+        }
+
+        // handler 返回时还没产生任何响应：不能把连接就这么挂着，补一个 500
+        if (!responder->Done())
+        {
+            LOG_ERROR("HTTP async handler produced no response");
+            fallback(500);
+        }
+    };
+
+    if (_business)
+    {
+        // 队列满时不阻塞事件循环去等业务线程——那等于把刚解决的问题原样搬回来
+        if (!_business->Submit(std::move(task)))
+        {
+            HttpResponse busy(503);
+            SetErrorBody(busy, 503);
+            responder->Send(std::move(busy));
+        }
+        return;
+    }
+
+    // 没有业务线程：在事件循环线程上内联执行。只适合立刻返回的 handler，
+    // 阻塞式 handler 会连带把自己写出的数据也堵在输出缓冲里发不出去。
+    task();
 }
 
 void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) const
@@ -216,6 +328,12 @@ void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) co
     // 判断这个路径到底存不存在：完全不存在回 404，存在但方法不对回 405
     std::set<std::string> allowed;
     for (const auto &entry : _routes)
+    {
+        if (entry.first.second == path)
+            allowed.insert(entry.first.first);
+    }
+    // 异步路由也要计入：否则只注册在异步表里的路径会被归成 404 而不是 405
+    for (const auto &entry : _async_routes)
     {
         if (entry.first.second == path)
             allowed.insert(entry.first.first);
