@@ -44,6 +44,7 @@ http_add_test(TestSendLimits send-limits)
 http_add_test(TestServerStop server-stop)
 http_add_test(TestHttpServer http-server)
 http_add_test(TestHttpStreaming http-streaming)
+http_add_test(TestHttpRouting http-routing)
 
 foreach(symbol socket bind connect listen accept recv send setsockopt fcntl close)
     target_link_options(TestSocketFaults PRIVATE "LINKER:--wrap=${symbol}")

@@ -22,6 +22,55 @@ void SetErrorBody(HttpResponse &response, int status)
     response.SetBody(std::string(Util::StatusDescription(status)) + "\n");
 }
 
+// 把路径按 '/' 切成段。开头的 '/' 不产生段；结尾的 '/' 也不产生空段。
+std::vector<std::string> SplitSegments(const std::string &path)
+{
+    std::vector<std::string> segments;
+    std::size_t start = (!path.empty() && path.front() == '/') ? 1 : 0;
+    while (start <= path.size())
+    {
+        const std::size_t slash = path.find('/', start);
+        const std::size_t end = (slash == std::string::npos) ? path.size() : slash;
+        segments.push_back(path.substr(start, end - start));
+        if (slash == std::string::npos)
+            break;
+        start = slash + 1;
+    }
+    if (!segments.empty() && segments.back().empty())
+        segments.pop_back();
+    return segments;
+}
+
+// 把参数模式切成「字面段」与「参数名」。返回 false 表示模式非法。
+//
+// 参数名要求非空、是合法 token 且不重复：重名会让后注入的值覆盖先注入的，
+// 而调用方按名字取值时拿到的究竟是哪一个段就说不清了。
+bool BuildPattern(const std::string &pattern, std::vector<std::string> &literals, std::vector<std::string> &names)
+{
+    const std::vector<std::string> segments = SplitSegments(pattern);
+    if (segments.empty())
+        return false;
+
+    std::set<std::string> seen;
+    for (const auto &segment : segments)
+    {
+        if (!segment.empty() && segment.front() == ':')
+        {
+            const std::string name = segment.substr(1);
+            if (name.empty() || !Util::IsToken(name) || !seen.insert(name).second)
+                return false;
+            literals.emplace_back();
+            names.push_back(name);
+        }
+        else
+        {
+            literals.push_back(segment);
+            names.emplace_back();
+        }
+    }
+    return true;
+}
+
 // 每连接的协议状态。
 //
 // busy 表示这条连接上有一条异步/流式响应正在写。期间不能再解析后续请求——否则会在
@@ -109,6 +158,90 @@ void HttpServer::AddAsyncRoute(std::string method, std::string path, AsyncHandle
     if (_routes.count(key) != 0 || _async_routes.count(key) != 0)
         throw std::invalid_argument("HttpServer: duplicate route");
     _async_routes.emplace(key, std::move(handler));
+}
+
+void HttpServer::AddParamRoute(std::string method, std::string pattern, Handler handler)
+{
+    EnsureConfigurable();
+    ValidateRoute(method, pattern, static_cast<bool>(handler));
+
+    ParamRoute route;
+    route.method = std::move(method);
+    route.handler = std::move(handler);
+    route.is_async = false;
+    if (!BuildPattern(pattern, route.literals, route.names))
+        throw std::invalid_argument("HttpServer: invalid path parameter in route");
+    _param_routes.push_back(std::move(route));
+}
+
+void HttpServer::AddParamAsyncRoute(std::string method, std::string pattern, AsyncHandler handler)
+{
+    EnsureConfigurable();
+    ValidateRoute(method, pattern, static_cast<bool>(handler));
+
+    ParamRoute route;
+    route.method = std::move(method);
+    route.async_handler = std::move(handler);
+    route.is_async = true;
+    if (!BuildPattern(pattern, route.literals, route.names))
+        throw std::invalid_argument("HttpServer: invalid path parameter in route");
+    _param_routes.push_back(std::move(route));
+}
+
+void HttpServer::SetNotFoundHandler(std::function<void(const HttpRequest &, HttpResponse &)> handler)
+{
+    EnsureConfigurable();
+    _not_found_handler = std::move(handler);
+}
+
+void HttpServer::SetRequestHook(std::function<void(const HttpRequest &)> hook)
+{
+    EnsureConfigurable();
+    _request_hook = std::move(hook);
+}
+
+const HttpServer::ParamRoute *HttpServer::MatchParamRoute(const std::string &method, const std::string &path,
+                                                          HttpRequest *request) const
+{
+    const std::vector<std::string> segments = SplitSegments(path);
+    for (const auto &route : _param_routes)
+    {
+        if (route.method != method || route.literals.size() != segments.size())
+            continue;
+
+        bool matched = true;
+        for (std::size_t index = 0; index < segments.size(); ++index)
+        {
+            if (!route.names[index].empty())
+            {
+                // 参数段不接受空值：/a//b 不该匹配 /a/:x/b
+                if (segments[index].empty())
+                {
+                    matched = false;
+                    break;
+                }
+                continue;
+            }
+            if (route.literals[index] != segments[index])
+            {
+                matched = false;
+                break;
+            }
+        }
+        if (!matched)
+            continue;
+
+        if (request != nullptr)
+        {
+            for (std::size_t index = 0; index < segments.size(); ++index)
+            {
+                if (!route.names[index].empty())
+                    request->SetPathParam(route.names[index], segments[index]);
+            }
+        }
+        return &route;
+    }
+    return nullptr;
 }
 
 void HttpServer::SetDocumentRoot(std::filesystem::path root)
@@ -201,13 +334,31 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
         // 5.获得完整请求
         const auto &request = context->GetRequest();
 
-        // 6.异步/流式路由：响应由 handler 自己负责发送，不走下面的序列化路径。
-        //   置 busy 挡住后续请求，等响应结束由 OnAsyncFinished 恢复解析。
-        const auto async = _async_routes.find({request.GetMethod(), request.GetPath()});
-        if (async != _async_routes.end())
+        // 6.路由优先级：精确路由 → 参数路由 → 静态文件 → 404/405。
+        //
+        //   精确表里同步与异步不会重名（注册时已拒重复），所以先查异步表、再由 Dispatch
+        //   查同步表，两者合起来就是「精确路由」这一档。
+        if (_request_hook)
+            _request_hook(request);
+
+        const auto exact_async = _async_routes.find({request.GetMethod(), request.GetPath()});
+        if (exact_async != _async_routes.end())
         {
             state->busy = true;
-            RespondAsync(conn, request, async->second, buffer);
+            RespondAsync(conn, request, exact_async->second, buffer);
+            return;
+        }
+
+        // 精确路由命中时不再考虑参数路由，否则一条字面路径会被模式抢走
+        const ParamRoute *param = nullptr;
+        if (_routes.find({request.GetMethod(), request.GetPath()}) == _routes.end())
+            param = MatchParamRoute(request.GetMethod(), request.GetPath(), &context->MutableRequest());
+
+        // 参数路由的同步与异步同属一档，按注册顺序先到先得；命中异步的才走异步路径
+        if (param != nullptr && param->is_async)
+        {
+            state->busy = true;
+            RespondAsync(conn, request, param->async_handler, buffer);
             return;
         }
 
@@ -220,7 +371,7 @@ void HttpServer::OnMessage(const ConnectionPtr &conn, Buffer *buffer)
         try
         {
             // 9.根据request进行查找路由表，构造响应向客户端发送
-            Dispatch(request, response);
+            Dispatch(request, response, param);
         }
         catch (const std::bad_alloc &)
         {
@@ -339,7 +490,7 @@ void HttpServer::OnAsyncFinished(const ConnectionPtr &conn, Buffer *buffer)
         OnMessage(conn, buffer);
 }
 
-void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) const
+void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response, const ParamRoute *param) const
 {
     // 1.获得请求方法: method
     const auto &method = request.GetMethod();
@@ -361,7 +512,15 @@ void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) co
         return;
     }
 
-    // 5.这个路径其实是磁盘上的静态文件
+    // 5.参数路由。调用方已经保证精确路由没命中，也按优先级筛过了；
+    //   走到这里还带着异步的说明调用方漏判，落到兜底去。
+    if (param != nullptr && param->handler)
+    {
+        param->handler(request, response);
+        return;
+    }
+
+    // 6.这个路径其实是磁盘上的静态文件
     std::filesystem::path file;
     const bool static_file = ResolveStaticFile(path, file);
     if (static_file && (method == "GET" || method == "HEAD"))
@@ -370,7 +529,7 @@ void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) co
         return;
     }
 
-    // 6.没能命中时的归因
+    // 7.没能命中时的归因
     // 判断这个路径到底存不存在：完全不存在回 404，存在但方法不对回 405
     std::set<std::string> allowed;
     for (const auto &entry : _routes)
@@ -384,12 +543,24 @@ void HttpServer::Dispatch(const HttpRequest &request, HttpResponse &response) co
         if (entry.first.second == path)
             allowed.insert(entry.first.first);
     }
+    // 参数路由同理，但只算那些模式能匹配上这条路径的
+    for (const auto &entry : _param_routes)
+    {
+        if (MatchParamRoute(entry.method, path, nullptr) == &entry)
+            allowed.insert(entry.method);
+    }
     if (static_file)
         allowed.insert("GET");
     if (allowed.count("GET") != 0)
         allowed.insert("HEAD");
     if (allowed.empty())
     {
+        // 路径未知：默认按状态码生成一句纯文本，设了钩子就交给它
+        if (_not_found_handler)
+        {
+            _not_found_handler(request, response);
+            return;
+        }
         SetErrorBody(response, 404);
         return;
     }

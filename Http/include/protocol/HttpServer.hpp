@@ -19,6 +19,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 class HttpResponder;
 
@@ -53,6 +54,25 @@ class HttpServer
     // handler 必须在返回前至少调用一次 Send 或 BeginStream，否则框架补一个 500。
     void AddAsyncRoute(std::string method, std::string path, AsyncHandler handler);
 
+    // 带路径参数的路由：模式里以 ':' 开头的段是参数名。
+    //   /api/session/:id/history  匹配 /api/session/abc/history，注入 id="abc"
+    //
+    // 刻意不走 AddRoute：':' 在 URI 路径里是合法字面字符，把两者合并成一套，
+    // 会让一条本意是字面量的路径悄悄变成模式。
+    //
+    // 匹配优先级低于精确路由——先查精确表，都没命中才试这些。
+    void AddParamRoute(std::string method, std::string pattern, Handler handler);
+    void AddParamAsyncRoute(std::string method, std::string pattern, AsyncHandler handler);
+
+    // 路径未知时的兜底响应。
+    // 默认按状态码生成一句纯文本；设了钩子就交给它，由它决定状态码与正文
+    // （例如 /api 下统一回 JSON 信封）。钩子不设时行为与原来完全一致。
+    void SetNotFoundHandler(std::function<void(const HttpRequest &, HttpResponse &)> handler);
+
+    // 每解析出一个完整请求、在路由之前调用一次。用于访问日志这类旁路记录；
+    // 它不该改变响应，因此拿不到可写的响应对象。
+    void SetRequestHook(std::function<void(const HttpRequest &)> hook);
+
     // 2.设置静态目录
     //  - 可选静态站点目录，必须存在；GET/HEAD 使用，动态路由优先。
     //  - 目录读取 index.html，不列目录；普通文件上限 8 MiB，超限返回 500 并关闭。
@@ -85,6 +105,18 @@ class HttpServer
     uint16_t GetPort() const noexcept { return _server.GetPort(); }
 
   private:
+    // 参数路由。handler 与 async_handler 二选一，is_async 指明用了哪个。
+    // 声明在私有方法之前：下面的声明要用到它。
+    struct ParamRoute
+    {
+        std::string method;
+        std::vector<std::string> literals; // 每段的字面值；参数段为空串
+        std::vector<std::string> names;    // 每段的参数名；字面段为空串
+        Handler handler;
+        AsyncHandler async_handler;
+        bool is_async = false;
+    };
+
     void EnsureConfigurable() const;
 
     // 1.设置协议上下文
@@ -93,7 +125,7 @@ class HttpServer
     void OnMessage(const ConnectionPtr &conn, Buffer *buffer);
     // 决策：产出响应【不碰网络】
     // 判断该由谁来产生响应：注册的 handler、磁盘上的静态文件，还是直接生成 404/405。
-    void Dispatch(const HttpRequest &request, HttpResponse &response) const;
+    void Dispatch(const HttpRequest &request, HttpResponse &response, const ParamRoute *param) const;
     // 判定：这路径是不是文件
     bool ResolveStaticFile(const std::string &path, std::filesystem::path &file) const;
     // 读取：文件内容填进响应
@@ -105,6 +137,9 @@ class HttpServer
                       Buffer *buffer);
     // 一条异步/流式响应结束之后，回循环线程复位状态并续解析残留请求
     void OnAsyncFinished(const ConnectionPtr &conn, Buffer *buffer);
+    // 在参数路由里找匹配项；命中返回该条目，否则返回 nullptr。
+    // request 非空时把路径参数写进去；只想知道「模式能不能匹配这条路径」就传 nullptr。
+    const ParamRoute *MatchParamRoute(const std::string &method, const std::string &path, HttpRequest *request) const;
 
   private:
     using RouteKey = std::pair<std::string, std::string>;
@@ -117,6 +152,11 @@ class HttpServer
 
     // 异步/流式路由单独一张表：同步那套的行为（尤其是序列化与发送时机）不能受影响
     std::map<RouteKey, AsyncHandler> _async_routes;
+
+    std::vector<ParamRoute> _param_routes;
+
+    std::function<void(const HttpRequest &, HttpResponse &)> _not_found_handler;
+    std::function<void(const HttpRequest &)> _request_hook;
 
     // 业务线程池。0 表示不用池、在事件循环线程上内联执行。
     // 只在 Start 期间存在：Start 返回即代表所有连接已收尾，此时回收最干净。
