@@ -84,8 +84,8 @@ struct ConnState
 };
 } // namespace
 
-HttpServer::HttpServer(uint16_t port)
-    : _server(port)
+HttpServer::HttpServer(uint16_t port, const std::string &ip)
+    : _server(port, ip)
 {
     _server.SetConnectedCallback([this](const ConnectionPtr &conn) {
         OnConnected(conn);

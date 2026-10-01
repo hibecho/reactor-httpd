@@ -72,7 +72,7 @@ class TcpServer
 
   public:
     /*TcpServer的构造函数*/
-    explicit TcpServer(uint16_t port);
+    explicit TcpServer(uint16_t port, const std::string &ip = "0.0.0.0");
     ~TcpServer();
     TcpServer(const TcpServer &) = delete;
     TcpServer &operator=(const TcpServer &) = delete;

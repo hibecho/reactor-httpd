@@ -38,7 +38,8 @@ class HttpServer
     using AsyncHandler = std::function<void(const HttpRequest &, const std::shared_ptr<HttpResponder> &)>;
 
     /*构造函数*/
-    explicit HttpServer(uint16_t port);
+    // ip 默认 0.0.0.0；只监听回环请显式传 "127.0.0.1"。
+    explicit HttpServer(uint16_t port, const std::string &ip = "0.0.0.0");
     HttpServer(const HttpServer &) = delete;
     HttpServer &operator=(const HttpServer &) = delete;
 
