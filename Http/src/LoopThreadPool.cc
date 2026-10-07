@@ -3,11 +3,20 @@
 #include <exception>
 #include <stdexcept>
 
-LoopThreadPool::LoopThreadPool(EventLoop *baseloop) : _baseloop(baseloop) {}
+LoopThreadPool::LoopThreadPool(EventLoop *baseloop)
+    : _baseloop(baseloop)
+{
+}
 
 LoopThreadPool::~LoopThreadPool()
 {
-    try { RequestStop(); } catch (...) {}
+    try
+    {
+        RequestStop();
+    }
+    catch (...)
+    {
+    }
     // 每个 LoopThread 析构都会 join，且不会抛出工作线程异常。
 }
 
@@ -53,10 +62,18 @@ void LoopThreadPool::RequestStop()
     std::exception_ptr error;
     for (auto &thread : _threads)
     {
-        try { thread->RequestStop(); }
-        catch (...) { if (!error) error = std::current_exception(); }
+        try
+        {
+            thread->RequestStop();
+        }
+        catch (...)
+        {
+            if (!error)
+                error = std::current_exception();
+        }
     }
-    if (error) std::rethrow_exception(error);
+    if (error)
+        std::rethrow_exception(error);
 }
 
 void LoopThreadPool::Join()
@@ -64,18 +81,34 @@ void LoopThreadPool::Join()
     std::exception_ptr error;
     for (auto &thread : _threads)
     {
-        try { thread->Join(); }
-        catch (...) { if (!error) error = std::current_exception(); }
+        try
+        {
+            thread->Join();
+        }
+        catch (...)
+        {
+            if (!error)
+                error = std::current_exception();
+        }
     }
-    if (error) std::rethrow_exception(error);
+    if (error)
+        std::rethrow_exception(error);
 }
 
 void LoopThreadPool::Stop()
 {
     std::exception_ptr error;
-    try { RequestStop(); } catch (...) { error = std::current_exception(); }
+    try
+    {
+        RequestStop();
+    }
+    catch (...)
+    {
+        error = std::current_exception();
+    }
     Join();
-    if (error) std::rethrow_exception(error);
+    if (error)
+        std::rethrow_exception(error);
 }
 
 std::vector<EventLoop *> LoopThreadPool::Loops()

@@ -14,74 +14,74 @@
 
 namespace
 {
-constexpr std::size_t kMaxStaticFile = 8 * 1024 * 1024;
+    constexpr std::size_t kMaxStaticFile = 8 * 1024 * 1024;
 
-void SetErrorBody(HttpResponse &response, int status)
-{
-    response.SetStatus(status);
-    response.SetBody(std::string(Util::StatusDescription(status)) + "\n");
-}
-
-// 把路径按 '/' 切成段。开头的 '/' 不产生段；结尾的 '/' 也不产生空段。
-std::vector<std::string> SplitSegments(const std::string &path)
-{
-    std::vector<std::string> segments;
-    std::size_t start = (!path.empty() && path.front() == '/') ? 1 : 0;
-    while (start <= path.size())
+    void SetErrorBody(HttpResponse &response, int status)
     {
-        const std::size_t slash = path.find('/', start);
-        const std::size_t end = (slash == std::string::npos) ? path.size() : slash;
-        segments.push_back(path.substr(start, end - start));
-        if (slash == std::string::npos)
-            break;
-        start = slash + 1;
+        response.SetStatus(status);
+        response.SetBody(std::string(Util::StatusDescription(status)) + "\n");
     }
-    if (!segments.empty() && segments.back().empty())
-        segments.pop_back();
-    return segments;
-}
 
-// 把参数模式切成「字面段」与「参数名」。返回 false 表示模式非法。
-//
-// 参数名要求非空、是合法 token 且不重复：重名会让后注入的值覆盖先注入的，
-// 而调用方按名字取值时拿到的究竟是哪一个段就说不清了。
-bool BuildPattern(const std::string &pattern, std::vector<std::string> &literals, std::vector<std::string> &names)
-{
-    const std::vector<std::string> segments = SplitSegments(pattern);
-    if (segments.empty())
-        return false;
-
-    std::set<std::string> seen;
-    for (const auto &segment : segments)
+    // 把路径按 '/' 切成段。开头的 '/' 不产生段；结尾的 '/' 也不产生空段。
+    std::vector<std::string> SplitSegments(const std::string &path)
     {
-        if (!segment.empty() && segment.front() == ':')
+        std::vector<std::string> segments;
+        std::size_t start = (!path.empty() && path.front() == '/') ? 1 : 0;
+        while (start <= path.size())
         {
-            const std::string name = segment.substr(1);
-            if (name.empty() || !Util::IsToken(name) || !seen.insert(name).second)
-                return false;
-            literals.emplace_back();
-            names.push_back(name);
+            const std::size_t slash = path.find('/', start);
+            const std::size_t end = (slash == std::string::npos) ? path.size() : slash;
+            segments.push_back(path.substr(start, end - start));
+            if (slash == std::string::npos)
+                break;
+            start = slash + 1;
         }
-        else
-        {
-            literals.push_back(segment);
-            names.emplace_back();
-        }
+        if (!segments.empty() && segments.back().empty())
+            segments.pop_back();
+        return segments;
     }
-    return true;
-}
 
-// 每连接的协议状态。
-//
-// busy 表示这条连接上有一条异步/流式响应正在写。期间不能再解析后续请求——否则会在
-// 同一条连接上写出两份响应，报文边界就乱了。响应结束（或连接关闭）时清掉。
-//
-// 之所以把 context 一起装进来而不是各存一份：两者生命周期完全一致，分开存迟早会漂移。
-struct ConnState
-{
-    HttpContext context;
-    bool busy = false;
-};
+    // 把参数模式切成「字面段」与「参数名」。返回 false 表示模式非法。
+    //
+    // 参数名要求非空、是合法 token 且不重复：重名会让后注入的值覆盖先注入的，
+    // 而调用方按名字取值时拿到的究竟是哪一个段就说不清了。
+    bool BuildPattern(const std::string &pattern, std::vector<std::string> &literals, std::vector<std::string> &names)
+    {
+        const std::vector<std::string> segments = SplitSegments(pattern);
+        if (segments.empty())
+            return false;
+
+        std::set<std::string> seen;
+        for (const auto &segment : segments)
+        {
+            if (!segment.empty() && segment.front() == ':')
+            {
+                const std::string name = segment.substr(1);
+                if (name.empty() || !Util::IsToken(name) || !seen.insert(name).second)
+                    return false;
+                literals.emplace_back();
+                names.push_back(name);
+            }
+            else
+            {
+                literals.push_back(segment);
+                names.emplace_back();
+            }
+        }
+        return true;
+    }
+
+    // 每连接的协议状态。
+    //
+    // busy 表示这条连接上有一条异步/流式响应正在写。期间不能再解析后续请求——否则会在
+    // 同一条连接上写出两份响应，报文边界就乱了。响应结束（或连接关闭）时清掉。
+    //
+    // 之所以把 context 一起装进来而不是各存一份：两者生命周期完全一致，分开存迟早会漂移。
+    struct ConnState
+    {
+        HttpContext context;
+        bool busy = false;
+    };
 } // namespace
 
 HttpServer::HttpServer(uint16_t port, const std::string &ip)
@@ -406,8 +406,8 @@ void HttpServer::RespondAsync(const ConnectionPtr &conn, const HttpRequest &requ
     // 复用与否交给请求本身决定：HTTP/1.0 的请求不会要求 keep-alive，而 BeginStream 在
     // 分块不可用时也会把复用关掉（那种情况只能靠关闭连接界定正文）。
     const bool keep_alive = request.IsKeepAlive();
-    auto responder = std::make_shared<HttpResponder>(conn, request.GetVersion(), request.GetMethod() == "HEAD",
-                                                     keep_alive);
+    auto responder =
+        std::make_shared<HttpResponder>(conn, request.GetVersion(), request.GetMethod() == "HEAD", keep_alive);
 
     // 响应结束后回连接所属的循环线程复位状态、并续解析已经到达的后续请求。
     // 必须在循环线程上做——这里会被业务线程调用，跨线程直接碰连接状态是数据竞争。
