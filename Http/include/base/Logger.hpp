@@ -67,13 +67,6 @@ class Logger
     // 7.排空、刷新并回收后台线程，直到 Init 前保持静默；建议业务线程退出后调用。
     void Shutdown();
 
-    // 8.底层 logger 的句柄；未初始化时为空。
-    //
-    // 给「把进程里其它直接调 spdlog 的代码也汇到同一个 sink」用：
-    // spdlog::set_default_logger(handle) 之后，spdlog::info(...) 与本类走同一套
-    // 格式与同一个输出。不提供这个入口的话，同一进程里会出现两种日志格式。
-    std::shared_ptr<spdlog::logger> Handle();
-
     // 8.调用日志
     template <typename... Args>
     void Log(spdlog::source_loc location, Level level, spdlog::format_string_t<Args...> format, Args &&...args)

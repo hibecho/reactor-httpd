@@ -194,12 +194,6 @@ Logger::Level Logger::GetLevel()
     return _logger ? static_cast<Level>(_logger->level()) : Level::Off;
 }
 
-std::shared_ptr<spdlog::logger> Logger::Handle()
-{
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _logger;
-}
-
 bool Logger::ShouldLog(Level level)
 {
     std::lock_guard<std::mutex> lock(_mutex);

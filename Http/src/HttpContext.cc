@@ -162,11 +162,6 @@ HttpContext::ParseResult HttpContext::Parse(Buffer &buffer)
 
 // 返回内部请求的只读引用，避免复制；完整请求仅在 Parse 返回 Complete 后可用。
 // Reset 会清空引用所指对象的内容，上下文销毁后引用失效。
-HttpRequest &HttpContext::MutableRequest()
-{
-    return _request;
-}
-
 const HttpRequest &HttpContext::GetRequest() const
 {
     return _request;

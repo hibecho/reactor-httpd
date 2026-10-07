@@ -50,9 +50,7 @@ endif()
 add_library(http_core STATIC
     src/Acceptor.cc src/Buffer.cc src/Channel.cc src/Connection.cc
     src/Epoller.cc src/EventLoop.cc src/HttpContext.cc src/HttpRequest.cc
-    src/BusinessThreadPool.cc src/HttpResponse.cc src/HttpResponder.cc
-    src/HttpServer.cc src/HttpStreamWriter.cc
-    src/Logger.cc src/LoopThread.cc
+    src/HttpResponse.cc src/HttpServer.cc src/Logger.cc src/LoopThread.cc
     src/LoopThreadPool.cc src/Socket.cc src/TcpServer.cc src/TimerQueue.cc src/Util.cc)
 target_link_libraries(http_core PUBLIC http_options http_sanitizers spdlog::spdlog Threads::Threads)
 add_executable(HttpServer main.cc)

@@ -111,7 +111,20 @@ std::string HttpResponse::Serialize(bool head_request) const
     result += "\r\n";
 
     // 调用方设置的头字段；Content-Length 与 Connection 由本类统一生成，避免两个来源。
-    AppendUserFields(result, false);
+    // 重定向时 Location 也由 _redirect_url 提供，同样跳过调用方的同名头；不重定向则照常输出。
+    for (const auto &field : _headers)
+    {
+        if (Util::EqualsIgnoreCaseAscii(field.first, "Content-Length") ||
+            Util::EqualsIgnoreCaseAscii(field.first, "Connection") ||
+            (_redirect_flag && Util::EqualsIgnoreCaseAscii(field.first, "Location")))
+        {
+            continue;
+        }
+        result += field.first;
+        result += ": ";
+        result += field.second;
+        result += "\r\n";
+    }
 
     // 重定向目标
     if (_redirect_flag)
@@ -143,73 +156,6 @@ std::string HttpResponse::Serialize(bool head_request) const
     {
         result += _body;
     }
-
-    return result;
-}
-
-// 输出调用方设置的头字段，跳过由本类统一生成的字段。
-//
-// streaming 为 true 时额外跳过 Transfer-Encoding：流式响应必须由本类决定这一字段
-// （有就是 chunked，没有就是 close-delimited），调用方自己设一个会让两者打架。
-void HttpResponse::AppendUserFields(std::string &out, bool streaming) const
-{
-    // 重定向时 Location 由 _redirect_url 提供，同样跳过调用方的同名头；不重定向则照常输出。
-    for (const auto &field : _headers)
-    {
-        if (Util::EqualsIgnoreCaseAscii(field.first, "Content-Length") ||
-            Util::EqualsIgnoreCaseAscii(field.first, "Connection") ||
-            (streaming && Util::EqualsIgnoreCaseAscii(field.first, "Transfer-Encoding")) ||
-            (_redirect_flag && Util::EqualsIgnoreCaseAscii(field.first, "Location")))
-        {
-            continue;
-        }
-        out += field.first;
-        out += ": ";
-        out += field.second;
-        out += "\r\n";
-    }
-}
-
-// 只生成状态行与响应头，供流式响应先发出去。
-std::string HttpResponse::SerializeHead(bool chunked) const
-{
-    std::string result;
-    result.reserve(256);
-
-    // 响应行: HTTP 版本 + 状态码 + 状态描述
-    result += _version;
-    result += ' ';
-    result += std::to_string(_status);
-    result += ' ';
-    result += Util::StatusDescription(_status);
-    result += "\r\n";
-
-    AppendUserFields(result, true);
-
-    // 重定向目标
-    if (_redirect_flag)
-    {
-        result += "Location: ";
-        result += _redirect_url;
-        result += "\r\n";
-    }
-
-    // 正文长度不在此时可知，因此两种情况下都不输出 Content-Length：
-    //   chunked   —— 由分块编码自行界定
-    //   非 chunked —— HTTP/1.0 的 close-delimited，靠关闭连接界定
-    // 状态码禁止携带正文时同样不该出现这两个字段。
-    if (chunked && !IsBodyForbidden(_status))
-    {
-        result += "Transfer-Encoding: chunked\r\n";
-    }
-
-    // 连接复用意图
-    result += "Connection: ";
-    result += (_close ? "close" : "keep-alive");
-    result += "\r\n";
-
-    // 响应头与正文之间以空行分隔
-    result += "\r\n";
 
     return result;
 }

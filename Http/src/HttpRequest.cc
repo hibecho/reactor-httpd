@@ -91,27 +91,6 @@ std::string HttpRequest::GetParams(const std::string &key) const
     return it->second;
 }
 
-// 路由匹配时由服务器注入；同名覆盖，匹配器保证一次只注入一遍。
-void HttpRequest::SetPathParam(std::string name, std::string value)
-{
-    _path_params.insert_or_assign(std::move(name), std::move(value));
-}
-
-bool HttpRequest::FindPathParam(const std::string &name) const
-{
-    return _path_params.find(name) != _path_params.end();
-}
-
-std::string HttpRequest::GetPathParam(const std::string &name) const
-{
-    auto it = _path_params.find(name);
-    if (it == _path_params.end())
-    {
-        return "";
-    }
-    return it->second;
-}
-
 // 构建请求时使用。
 void HttpRequest::SetMethod(std::string method)
 {
@@ -198,6 +177,5 @@ void HttpRequest::Reset()
 
     _headers.clear();
     _params.clear();
-    _path_params.clear();
     _body.clear();
 }

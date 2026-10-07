@@ -18,10 +18,10 @@
 #include <unistd.h>
 #include <utility>
 
-TcpServer::TcpServer(uint16_t port, const std::string &ip)
+TcpServer::TcpServer(uint16_t port)
     : _port(port)
     , _baseloop(std::make_unique<EventLoop>())
-    , _acceptor(std::make_unique<Acceptor>(_baseloop.get(), port, ip))
+    , _acceptor(std::make_unique<Acceptor>(_baseloop.get(), port))
     , _pool(std::make_unique<LoopThreadPool>(_baseloop.get()))
 {
     sockaddr_in address{};

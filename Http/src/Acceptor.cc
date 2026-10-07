@@ -37,7 +37,7 @@
     创建 Connection、设置回调、保存并启动连接
  */
 
-Acceptor::Acceptor(EventLoop *loop, uint16_t port, const std::string &ip)
+Acceptor::Acceptor(EventLoop *loop, uint16_t port)
     : _listener(std::make_unique<Socket>())
     , _loop(loop)
 {
@@ -49,7 +49,7 @@ Acceptor::Acceptor(EventLoop *loop, uint16_t port, const std::string &ip)
 
     // 创建 socket + 绑定端口 + listen
     // 内部已经设定sockfd
-    if (!_listener->CreateServer(port, ip))
+    if (!_listener->CreateServer(port))
         throw std::runtime_error("Acceptor: CreateServer failed");
 
     // 实例化channel对象，进行监听事件的管理

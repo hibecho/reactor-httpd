@@ -82,10 +82,6 @@ class Connection : public std::enable_shared_from_this<Connection>
     uint64_t GetConnetId();
     // 获取Timer ID
     uint64_t GetTimerId();
-    // 所属事件循环。协议层要用它把「稍后要做的事」送回连接的线程——
-    // 连接的回调只在所属循环线程上执行，跨线程直接碰连接状态是数据竞争。
-    // 指针只在连接存活期间有效；循环的生命周期长于连接（见构造函数注释）。
-    EventLoop *GetLoop() const noexcept { return _loop; }
     // 判断是否连接
     bool IsConnected();
     // 设置上下文

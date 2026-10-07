@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string>
 
 class Socket;
 class EventLoop;
@@ -40,9 +39,7 @@ class Acceptor
     // 创建监听失败抛 std::runtime_error。
     // 构造成功即意味着已完成绑定与监听，但**尚未登记读事件**：
     // 登记要等 StartAccepting()，以便调用方先把 accept 回调设置好。
-    // ip 默认 0.0.0.0（所有网卡）。要只监听回环就传 "127.0.0.1"——
-    // 绑到比调用方要求的更宽的地址上属于越权暴露，所以这个参数必须能指定。
-    Acceptor(EventLoop *loop, uint16_t port, const std::string &ip = "0.0.0.0");
+    Acceptor(EventLoop *loop, uint16_t port);
     // 若已 StartAccepting() 则注销读事件登记，再关闭监听套接字。
     // 所属 EventLoop 必须仍然存活，且析构需发生在所属线程——注销必须早于
     // EventLoop 析构，否则会在已销毁的 epoll 上做 EPOLL_CTL_DEL。
