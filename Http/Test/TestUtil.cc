@@ -51,133 +51,137 @@ template <class E, class F> void Throws(F operation)
 
 namespace
 {
-// 看门狗：ReadFile 的分块读循环一旦失控就是永久阻塞，必须留下可定位的失败痕迹。
-// 处理器只做异步信号安全的 write 与 _exit，直接退出的默认动作无法说明卡在哪。
-void OnAlarm(int)
-{
-    const char message[] = "TIMEOUT: 30 秒内未完成\n";
-    const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
-    (void)ignored;
-    _exit(EXIT_FAILURE);
-}
+    // 看门狗：ReadFile 的分块读循环一旦失控就是永久阻塞，必须留下可定位的失败痕迹。
+    // 处理器只做异步信号安全的 write 与 _exit，直接退出的默认动作无法说明卡在哪。
+    void OnAlarm(int)
+    {
+        const char message[] = "TIMEOUT: 30 秒内未完成\n";
+        const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
+        (void)ignored;
+        _exit(EXIT_FAILURE);
+    }
 
-void ArmWatchdog(unsigned seconds)
-{
-    struct sigaction action;
-    std::memset(&action, 0, sizeof(action));
-    action.sa_handler = OnAlarm;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0;
-    if (sigaction(SIGALRM, &action, nullptr) != 0)
+    void ArmWatchdog(unsigned seconds)
     {
-        throw std::runtime_error("sigaction failed");
+        struct sigaction action;
+        std::memset(&action, 0, sizeof(action));
+        action.sa_handler = OnAlarm;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0;
+        if (sigaction(SIGALRM, &action, nullptr) != 0)
+        {
+            throw std::runtime_error("sigaction failed");
+        }
+        alarm(seconds);
     }
-    alarm(seconds);
-}
 
-// 临时目录随用例结束整体删除，与 TestResourcePath.cc 的夹具一致。
-struct Fixture
-{
-    fs::path base;
-    Fixture()
+    // 临时目录随用例结束整体删除，与 TestResourcePath.cc 的夹具一致。
+    struct Fixture
     {
-        char pattern[] = "/tmp/http-util-XXXXXX";
-        const char *directory = ::mkdtemp(pattern);
-        if (!directory) throw std::runtime_error("mkdtemp failed");
-        base = directory;
-    }
-    ~Fixture()
-    {
-        std::error_code ec;
-        fs::remove_all(base, ec);
-    }
-};
+        fs::path base;
+        Fixture()
+        {
+            char pattern[] = "/tmp/http-util-XXXXXX";
+            const char *directory = ::mkdtemp(pattern);
+            if (!directory)
+                throw std::runtime_error("mkdtemp failed");
+            base = directory;
+        }
+        ~Fixture()
+        {
+            std::error_code ec;
+            fs::remove_all(base, ec);
+        }
+    };
 
-// 断言各组元素内容，而不是拿 initializer_list 直接比较：宏实参里的逗号会被预处理器切开。
-void ExpectParts(const std::vector<std::string> &actual, const std::vector<std::string> &expected)
-{
-    CHECK(actual.size() == expected.size());
-    for (std::size_t i = 0; i < expected.size(); ++i)
+    // 断言各组元素内容，而不是拿 initializer_list 直接比较：宏实参里的逗号会被预处理器切开。
+    void ExpectParts(const std::vector<std::string> &actual, const std::vector<std::string> &expected)
     {
-        CHECK(actual[i] == expected[i]);
+        CHECK(actual.size() == expected.size());
+        for (std::size_t i = 0; i < expected.size(); ++i)
+        {
+            CHECK(actual[i] == expected[i]);
+        }
     }
-}
 
-std::string Dump(const Buffer &buffer) { return buffer.PeekAsString(buffer.GetReadableSize()); }
+    std::string Dump(const Buffer &buffer)
+    {
+        return buffer.PeekAsString(buffer.GetReadableSize());
+    }
 
-// 独立于 Util 的落盘与读取，避免 ReadFile 的用例依赖 WriteFile 是否正确。
-void WriteRaw(const fs::path &path, std::string_view content)
-{
-    std::ofstream ofs(path, std::ios::binary);
-    CHECK(ofs.is_open());
-    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
-    CHECK(static_cast<bool>(ofs));
-}
+    // 独立于 Util 的落盘与读取，避免 ReadFile 的用例依赖 WriteFile 是否正确。
+    void WriteRaw(const fs::path &path, std::string_view content)
+    {
+        std::ofstream ofs(path, std::ios::binary);
+        CHECK(ofs.is_open());
+        ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
+        CHECK(static_cast<bool>(ofs));
+    }
 
-std::string ReadRaw(const fs::path &path)
-{
-    std::ifstream ifs(path, std::ios::binary);
-    CHECK(ifs.is_open());
-    return std::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
-}
+    std::string ReadRaw(const fs::path &path)
+    {
+        std::ifstream ifs(path, std::ios::binary);
+        CHECK(ifs.is_open());
+        return std::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+    }
 
-// 0x00-0xFF 全覆盖，用于验证二进制安全与高位字节不被符号扩展。
-std::string AllByteValues()
-{
-    std::string bytes;
-    bytes.reserve(256);
-    for (int value = 0; value <= 255; ++value)
+    // 0x00-0xFF 全覆盖，用于验证二进制安全与高位字节不被符号扩展。
+    std::string AllByteValues()
     {
-        bytes += static_cast<char>(value);
+        std::string bytes;
+        bytes.reserve(256);
+        for (int value = 0; value <= 255; ++value)
+        {
+            bytes += static_cast<char>(value);
+        }
+        return bytes;
     }
-    return bytes;
-}
 
-std::string RandomBytes(std::size_t size, unsigned seed)
-{
-    std::mt19937 generator(seed);
-    std::uniform_int_distribution<int> distribution(0, 255);
-    std::string bytes(size, '\0');
-    for (char &ch : bytes)
+    std::string RandomBytes(std::size_t size, unsigned seed)
     {
-        ch = static_cast<char>(distribution(generator));
+        std::mt19937 generator(seed);
+        std::uniform_int_distribution<int> distribution(0, 255);
+        std::string bytes(size, '\0');
+        for (char &ch : bytes)
+        {
+            ch = static_cast<char>(distribution(generator));
+        }
+        return bytes;
     }
-    return bytes;
-}
 
-// 同一个循环里重复断言时行号无法定位是哪个输入出错，消息里带上输入内容。
-// 同时校验失败路径不修改输出：UrlDecode 先构造局部结果，只有成功才 swap。
-void ExpectRejectedEscape(std::string_view input)
-{
-    std::string output = "sentinel";
-    if (Util::UrlDecode(input, output))
+    // 同一个循环里重复断言时行号无法定位是哪个输入出错，消息里带上输入内容。
+    // 同时校验失败路径不修改输出：UrlDecode 先构造局部结果，只有成功才 swap。
+    void ExpectRejectedEscape(std::string_view input)
     {
-        throw std::runtime_error("accepted malformed escape: \"" + std::string(input) + "\"");
+        std::string output = "sentinel";
+        if (Util::UrlDecode(input, output))
+        {
+            throw std::runtime_error("accepted malformed escape: \"" + std::string(input) + "\"");
+        }
+        if (output != "sentinel")
+        {
+            throw std::runtime_error("output modified for rejected escape: \"" + std::string(input) + "\"");
+        }
     }
-    if (output != "sentinel")
-    {
-        throw std::runtime_error("output modified for rejected escape: \"" + std::string(input) + "\"");
-    }
-}
 
-template <class F> void Run(const char *name, F test, int &failures)
-{
-    try
+    template <class F> void Run(const char *name, F test, int &failures)
     {
-        test();
-        std::cout << "PASS " << name << "\n";
+        try
+        {
+            test();
+            std::cout << "PASS " << name << "\n";
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "FAIL " << name << ": " << error.what() << "\n";
+            ++failures;
+        }
+        catch (...)
+        {
+            std::cerr << "FAIL " << name << ": unknown exception\n";
+            ++failures;
+        }
     }
-    catch (const std::exception &error)
-    {
-        std::cerr << "FAIL " << name << ": " << error.what() << "\n";
-        ++failures;
-    }
-    catch (...)
-    {
-        std::cerr << "FAIL " << name << ": unknown exception\n";
-        ++failures;
-    }
-}
 } // namespace
 
 void TestSplit()
@@ -257,7 +261,9 @@ void TestSplit()
     ExpectParts(parts, {std::string("a\0b", 3), "c"});
 
     // 空分隔符是调用错误。
-    Throws<std::invalid_argument>([&] { Util::Split(csv, "", parts); });
+    Throws<std::invalid_argument>([&] {
+        Util::Split(csv, "", parts);
+    });
 }
 
 void TestUrlEncode()
@@ -348,8 +354,12 @@ void TestUrlDecode()
 
     // 十六进制位只允许 0-9 与 a-f；先钉住合法边界，避免修复时把范围收得过窄。
     const std::pair<std::string_view, std::string> valid_escapes[] = {
-        {"%00", std::string(1, '\0')}, {"%09", "\t"},          {"%0a", "\n"},
-        {"%1A", std::string(1, '\x1a')}, {"%AF", std::string(1, '\xaf')}, {"%af", std::string(1, '\xaf')},
+        {"%00", std::string(1, '\0')},
+        {"%09", "\t"},
+        {"%0a", "\n"},
+        {"%1A", std::string(1, '\x1a')},
+        {"%AF", std::string(1, '\xaf')},
+        {"%af", std::string(1, '\xaf')},
         {"%FF", std::string(1, '\xff')},
     };
     for (const auto &[escape, expected] : valid_escapes)
@@ -459,7 +469,9 @@ void TestAsciiHelpers()
 void TestMimeType()
 {
     // 返回值先落到 std::string 再比较，避免把比较过程本身的不确定性当成断言结果。
-    const auto mime = [](std::string_view name) { return std::string(Util::MimeType(name)); };
+    const auto mime = [](std::string_view name) {
+        return std::string(Util::MimeType(name));
+    };
 
     CHECK(mime("index.html") == "text/html");
     CHECK(mime("index.htm") == "text/html");
@@ -724,10 +736,30 @@ int main()
         Run("status", TestStatusDescription, failures);
         Run("ascii", TestAsciiHelpers, failures);
         Run("mimetype", TestMimeType, failures);
-        Run("readfile", [&] { TestReadFile(fixture.base); }, failures);
-        Run("writefile", [&] { TestWriteFile(fixture.base); }, failures);
-        Run("pathkinds", [&] { TestPathKinds(fixture.base); }, failures);
-        Run("resolve-smoke", [&] { TestResolveResourcePathSmoke(fixture.base); }, failures);
+        Run(
+            "readfile",
+            [&] {
+                TestReadFile(fixture.base);
+            },
+            failures);
+        Run(
+            "writefile",
+            [&] {
+                TestWriteFile(fixture.base);
+            },
+            failures);
+        Run(
+            "pathkinds",
+            [&] {
+                TestPathKinds(fixture.base);
+            },
+            failures);
+        Run(
+            "resolve-smoke",
+            [&] {
+                TestResolveResourcePathSmoke(fixture.base);
+            },
+            failures);
     }
     catch (const std::exception &error)
     {

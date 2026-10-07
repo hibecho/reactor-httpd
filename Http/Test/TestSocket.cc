@@ -20,15 +20,18 @@ static_assert(!std::is_copy_assignable<Socket>::value, "Socket owns its fd");
 static_assert(std::is_nothrow_move_constructible<Socket>::value, "safe move");
 static_assert(std::is_nothrow_move_assignable<Socket>::value, "safe move");
 
-#define CHECK(expr)                                                                                                      \
-    do                                                                                                                   \
-    {                                                                                                                    \
-        if (!(expr))                                                                                                     \
-            throw std::runtime_error(                                                                                    \
-                std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr + " errno=" + std::to_string(errno)); \
+#define CHECK(expr)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+            throw std::runtime_error(std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr +              \
+                                     " errno=" + std::to_string(errno));                                               \
     } while (false)
 
-static bool WouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK; }
+static bool WouldBlock()
+{
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+}
 static sockaddr_in Address(int fd)
 {
     sockaddr_in a{};
@@ -271,7 +274,10 @@ static void NoSigpipe()
 }
 
 static volatile sig_atomic_t signal_count = 0;
-static void OnSignal(int) { ++signal_count; }
+static void OnSignal(int)
+{
+    ++signal_count;
+}
 static void InterruptedCalls()
 {
     struct sigaction action{};
@@ -323,8 +329,13 @@ static void InterruptedCalls()
 
 int main()
 {
-    const std::pair<const char *, void (*)()> tests[] = {
-        {"ownership", Ownership}, {"options_and_server", OptionsAndServer}, {"data_transfer", DataTransfer}, {"backpressure", Backpressure}, {"failures", Failures}, {"no_sigpipe", NoSigpipe}, {"interrupted_calls", InterruptedCalls}};
+    const std::pair<const char *, void (*)()> tests[] = {{"ownership", Ownership},
+                                                         {"options_and_server", OptionsAndServer},
+                                                         {"data_transfer", DataTransfer},
+                                                         {"backpressure", Backpressure},
+                                                         {"failures", Failures},
+                                                         {"no_sigpipe", NoSigpipe},
+                                                         {"interrupted_calls", InterruptedCalls}};
     int failures = 0;
     for (const auto &test : tests)
     {

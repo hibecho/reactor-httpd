@@ -112,11 +112,21 @@ static void HandleDispatchesAllEventCombinations()
     const uint32_t events[] = {EPOLLIN, EPOLLOUT, EPOLLERR, EPOLLHUP};
     const char labels[] = {'R', 'W', 'E', 'C'};
     std::string calls;
-    channel.SetReadCallback([&calls] { calls += 'R'; });
-    channel.SetWriteCallback([&calls] { calls += 'W'; });
-    channel.SetErrorCallback([&calls] { calls += 'E'; });
-    channel.SetCloseCallback([&calls] { calls += 'C'; });
-    channel.SetEventCallback([&calls] { calls += 'A'; });
+    channel.SetReadCallback([&calls] {
+        calls += 'R';
+    });
+    channel.SetWriteCallback([&calls] {
+        calls += 'W';
+    });
+    channel.SetErrorCallback([&calls] {
+        calls += 'E';
+    });
+    channel.SetCloseCallback([&calls] {
+        calls += 'C';
+    });
+    channel.SetEventCallback([&calls] {
+        calls += 'A';
+    });
 
     for (unsigned mask = 0; mask < 16; ++mask)
     {
@@ -145,7 +155,9 @@ static void ReadyAndInterestAreSeparate(EventLoop &loop)
     {
         Channel channel(fd, &loop);
         std::string calls;
-        channel.SetEventCallback([&calls] { calls += 'A'; });
+        channel.SetEventCallback([&calls] {
+            calls += 'A';
+        });
         channel.EnableRead();
         channel.EnableWrite();
         channel.SetREvents(0);
@@ -162,8 +174,12 @@ static void CallbackReplacementAndClearing()
     const int fd = MakeEventfd();
     Channel channel(fd, nullptr);
     std::string calls;
-    channel.SetEventCallback([&calls] { calls += 'A'; });
-    channel.SetReadCallback([&calls] { calls += 'N'; });
+    channel.SetEventCallback([&calls] {
+        calls += 'A';
+    });
+    channel.SetReadCallback([&calls] {
+        calls += 'N';
+    });
     channel.SetREvents(EPOLLIN);
     channel.Handle();
     assert(calls == "NA");
@@ -193,8 +209,12 @@ static void EventSnapshot()
         calls += 'R';
         channel.SetREvents(0);
     });
-    channel.SetWriteCallback([&calls] { calls += 'W'; });
-    channel.SetEventCallback([&calls] { calls += 'A'; });
+    channel.SetWriteCallback([&calls] {
+        calls += 'W';
+    });
+    channel.SetEventCallback([&calls] {
+        calls += 'A';
+    });
 
     channel.SetREvents(EPOLLIN | EPOLLOUT);
     channel.Handle();
@@ -213,7 +233,9 @@ static void SameFdIdentityChecked(EventLoop &loop)
     Channel first(fd, &loop);
     first.EnableRead();
     Channel second(fd, &loop); // 两者同时存活，地址必不相同
-    assert(ThrowsLogicError([&second] { second.EnableRead(); }));
+    assert(ThrowsLogicError([&second] {
+        second.EnableRead();
+    }));
     first.Remove();
     assert(close(fd) == 0);
 }
@@ -225,7 +247,9 @@ static void UpdateRegistersChannel(EventLoop &loop)
     {
         Channel channel(fd, &loop);
         bool readable = false;
-        channel.SetReadCallback([&readable] { readable = true; });
+        channel.SetReadCallback([&readable] {
+            readable = true;
+        });
         channel.EnableRead();
 
         WriteEventfd(fd);
@@ -246,8 +270,12 @@ static void UpdateModifiesChannel(EventLoop &loop)
         Channel channel(fd, &loop);
         bool readable = false;
         bool writable = false;
-        channel.SetReadCallback([&readable] { readable = true; });
-        channel.SetWriteCallback([&writable] { writable = true; });
+        channel.SetReadCallback([&readable] {
+            readable = true;
+        });
+        channel.SetWriteCallback([&writable] {
+            writable = true;
+        });
         channel.EnableRead();
 
         // eventfd 恒可写，无需写入即可就绪
@@ -270,8 +298,12 @@ static void RemoveUnregistersChannel(EventLoop &loop)
     {
         Channel channel(fd, &loop);
         bool called = false;
-        channel.SetReadCallback([&called] { called = true; });
-        channel.SetEventCallback([&called] { called = true; });
+        channel.SetReadCallback([&called] {
+            called = true;
+        });
+        channel.SetEventCallback([&called] {
+            called = true;
+        });
         channel.EnableRead();
         channel.Remove();
 
@@ -279,7 +311,9 @@ static void RemoveUnregistersChannel(EventLoop &loop)
         // 否则 LoopOnce() 会永久阻塞在 epoll_wait
         WriteEventfd(fd);
         bool woke = false;
-        loop.QueueInLoop([&woke] { woke = true; });
+        loop.QueueInLoop([&woke] {
+            woke = true;
+        });
 
         loop.LoopOnce();
         assert(woke);
@@ -298,7 +332,9 @@ static void RemoveIsIdentityChecked(EventLoop &loop)
         Channel channel(fd, &loop);
         channel.EnableRead();
         channel.Remove();
-        assert(ThrowsLogicError([&channel] { channel.Remove(); }));
+        assert(ThrowsLogicError([&channel] {
+            channel.Remove();
+        }));
     }
     assert(close(fd) == 0);
 }
@@ -317,7 +353,9 @@ static void DestructorDoesNotDetach(EventLoop &loop)
     a.reset(); // 期望注销，实际未发生
 
     // a 的登记仍在映射里，b 想登记同一 fd 时撞上身份不符
-    assert(ThrowsLogicError([&b] { b->EnableRead(); }));
+    assert(ThrowsLogicError([&b] {
+        b->EnableRead();
+    }));
 
     assert(close(fd) == 0);
 }

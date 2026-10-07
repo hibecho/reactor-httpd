@@ -31,9 +31,9 @@
 #include <dirent.h>
 #include <iostream>
 #include <stdexcept>
-#include <system_error>
 #include <sys/eventfd.h>
 #include <sys/time.h>
+#include <system_error>
 #include <type_traits>
 #include <unistd.h>
 #include <vector>
@@ -42,8 +42,7 @@
 static_assert(!std::is_copy_constructible<Epoller>::value, "Epoller must not be copy constructible");
 static_assert(!std::is_copy_assignable<Epoller>::value, "Epoller must not be copy assignable");
 
-template <class Error, class Action>
-void ExpectThrow(Action action)
+template <class Error, class Action> void ExpectThrow(Action action)
 {
     bool caught = false;
     try
@@ -92,9 +91,9 @@ static void DrainEventfd(int fd)
 
 namespace
 {
-void OnAlarmInterrupt(int)
-{
-}
+    void OnAlarmInterrupt(int)
+    {
+    }
 } // namespace
 
 // WaitEvent 被打断时应返回且不产出就绪事件。
@@ -129,36 +128,60 @@ static void BareEpollerContracts()
     Epoller poller;
 
     // 空指针参数
-    ExpectThrow<std::invalid_argument>([&] { poller.AddEvent(nullptr); });
-    ExpectThrow<std::invalid_argument>([&] { poller.ModifyEvent(nullptr); });
-    ExpectThrow<std::invalid_argument>([&] { poller.RemoveEvent(nullptr); });
+    ExpectThrow<std::invalid_argument>([&] {
+        poller.AddEvent(nullptr);
+    });
+    ExpectThrow<std::invalid_argument>([&] {
+        poller.ModifyEvent(nullptr);
+    });
+    ExpectThrow<std::invalid_argument>([&] {
+        poller.RemoveEvent(nullptr);
+    });
 
     const int fd = MakeEventfd();
     Channel channel(fd, nullptr);
     Channel other(fd, nullptr); // 同 fd 的第二个对象，与 channel 同时存活
 
     // 未登记即修改/移除
-    ExpectThrow<std::logic_error>([&] { poller.ModifyEvent(&channel); });
-    ExpectThrow<std::logic_error>([&] { poller.RemoveEvent(&channel); });
+    ExpectThrow<std::logic_error>([&] {
+        poller.ModifyEvent(&channel);
+    });
+    ExpectThrow<std::logic_error>([&] {
+        poller.RemoveEvent(&channel);
+    });
 
     poller.AddEvent(&channel);
     // 重复登记
-    ExpectThrow<std::logic_error>([&] { poller.AddEvent(&channel); });
+    ExpectThrow<std::logic_error>([&] {
+        poller.AddEvent(&channel);
+    });
     // 身份校验：fd 命中但对象不是登记时的那个
-    ExpectThrow<std::logic_error>([&] { poller.ModifyEvent(&other); });
-    ExpectThrow<std::logic_error>([&] { poller.RemoveEvent(&other); });
+    ExpectThrow<std::logic_error>([&] {
+        poller.ModifyEvent(&other);
+    });
+    ExpectThrow<std::logic_error>([&] {
+        poller.RemoveEvent(&other);
+    });
     // UpdateEvent 是"存在则修改，不存在则创建"：已登记走修改，不应抛
     poller.UpdateEvent(&channel);
 
     poller.RemoveEvent(&channel);
-    ExpectThrow<std::logic_error>([&] { poller.ModifyEvent(&channel); });
-    ExpectThrow<std::logic_error>([&] { poller.RemoveEvent(&channel); });
+    ExpectThrow<std::logic_error>([&] {
+        poller.ModifyEvent(&channel);
+    });
+    ExpectThrow<std::logic_error>([&] {
+        poller.RemoveEvent(&channel);
+    });
 
     // 登记失败必须回滚映射：fd=-1 时 epoll_ctl 报 EBADF，抛 system_error。
     // 若失败时残留了映射，第二次会先撞上"已登记"而抛 logic_error。
     Channel bad(-1, nullptr);
-    ExpectThrow<std::system_error>([&] { poller.AddEvent(&bad); });
-    ExpectThrow<std::system_error>([&] { poller.AddEvent(&bad); });
+    ExpectThrow<std::system_error>([&] {
+        poller.AddEvent(&bad);
+    });
+    ExpectThrow<std::system_error>([&] {
+        poller.AddEvent(&bad);
+    });
 
     // 描述符被外部 close：内核在关闭时就已把它从本 epoll 摘除，登记实际不存在。
     // 此时 RemoveEvent 必须静默清理映射，否则该 fd 号被复用后会永久无法再登记。
@@ -168,7 +191,9 @@ static void BareEpollerContracts()
     assert(close(dying) == 0);
     poller.RemoveEvent(&dying_channel); // EBADF，不得抛出
     // 映射已 erase，所以这里仍报 EBADF；若残留则会抛 logic_error
-    ExpectThrow<std::system_error>([&] { poller.AddEvent(&dying_channel); });
+    ExpectThrow<std::system_error>([&] {
+        poller.AddEvent(&dying_channel);
+    });
 
     // 映射未受影响的一个对照：ModifyEvent 对已关闭的描述符报 system_error
     poller.AddEvent(&channel);
@@ -206,7 +231,9 @@ static void ReadyPath()
 
     // 单描述符就绪：就绪事件与读回调正确送达
     bool first_readable = false;
-    first.SetReadCallback([&first_readable] { first_readable = true; });
+    first.SetReadCallback([&first_readable] {
+        first_readable = true;
+    });
     WriteEventfd(fd1);
     std::vector<Channel *> ready;
     reactor.WaitEvent(ready);
@@ -218,7 +245,9 @@ static void ReadyPath()
     // 多描述符同时就绪：一次等待全部返回，顺序不作要求
     first_readable = false; // 重置，确保本段确实重新触发了回调
     bool second_readable = false;
-    second.SetReadCallback([&second_readable] { second_readable = true; });
+    second.SetReadCallback([&second_readable] {
+        second_readable = true;
+    });
     WriteEventfd(fd1);
     WriteEventfd(fd2);
     ready.clear();
@@ -238,7 +267,9 @@ static void ReadyPath()
     first.EnableWrite();
     reactor.ModifyEvent(&first);
     bool first_writable = false;
-    first.SetWriteCallback([&first_writable] { first_writable = true; });
+    first.SetWriteCallback([&first_writable] {
+        first_writable = true;
+    });
     ready.clear();
     reactor.WaitEvent(ready);
     assert(ready.size() == 1 && ready[0] == &first);

@@ -45,15 +45,18 @@
 #include <unordered_map>
 #include <vector>
 
-#define CHECK(expr)                                                                                                      \
-    do                                                                                                                   \
-    {                                                                                                                    \
-        if (!(expr))                                                                                                     \
-            throw std::runtime_error(                                                                                    \
-                std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr + " errno=" + std::to_string(errno)); \
+#define CHECK(expr)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+            throw std::runtime_error(std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr +              \
+                                     " errno=" + std::to_string(errno));                                               \
     } while (false)
 
-static bool WouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK; }
+static bool WouldBlock()
+{
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+}
 
 static sockaddr_in Address(int fd)
 {
@@ -85,30 +88,30 @@ static int CountOpenFds()
 
 namespace
 {
-// 看门狗：不用裸 alarm。SIGALRM 的默认动作是直接终止进程，make 只会看到
-// "Alarm clock" 而无法定位是哪条断言挂住。这里只做异步信号安全的 write 与 _exit。
-void OnAlarm(int)
-{
-    const char message[] = "TIMEOUT: 10 秒内未完成，疑似阻塞在 LoopOnce() 的 epoll_wait\n";
-    const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
-    (void)ignored;
-    _exit(EXIT_FAILURE);
-}
-
-void ArmWatchdog()
-{
-    struct sigaction action;
-    std::memset(&action, 0, sizeof(action));
-    action.sa_handler = OnAlarm;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0; // 不设 SA_RESTART，让被中断的系统调用返回 EINTR
-    if (sigaction(SIGALRM, &action, nullptr) != 0)
+    // 看门狗：不用裸 alarm。SIGALRM 的默认动作是直接终止进程，make 只会看到
+    // "Alarm clock" 而无法定位是哪条断言挂住。这里只做异步信号安全的 write 与 _exit。
+    void OnAlarm(int)
     {
-        std::cerr << "sigaction 失败\n";
-        std::exit(EXIT_FAILURE);
+        const char message[] = "TIMEOUT: 10 秒内未完成，疑似阻塞在 LoopOnce() 的 epoll_wait\n";
+        const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
+        (void)ignored;
+        _exit(EXIT_FAILURE);
     }
-    alarm(10);
-}
+
+    void ArmWatchdog()
+    {
+        struct sigaction action;
+        std::memset(&action, 0, sizeof(action));
+        action.sa_handler = OnAlarm;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0; // 不设 SA_RESTART，让被中断的系统调用返回 EINTR
+        if (sigaction(SIGALRM, &action, nullptr) != 0)
+        {
+            std::cerr << "sigaction 失败\n";
+            std::exit(EXIT_FAILURE);
+        }
+        alarm(10);
+    }
 } // namespace
 
 // accept + echo + 延迟回收。
@@ -117,19 +120,27 @@ void ArmWatchdog()
 class EchoServer
 {
   public:
-    explicit EchoServer(EventLoop *loop) : _loop(loop) {}
+    explicit EchoServer(EventLoop *loop)
+        : _loop(loop)
+    {
+    }
 
     EchoServer(const EchoServer &) = delete;
     EchoServer &operator=(const EchoServer &) = delete;
 
     // 异常回退路径也会走到这里，必须幂等
-    ~EchoServer() { Stop(); }
+    ~EchoServer()
+    {
+        Stop();
+    }
 
     void Start(uint16_t port, const std::string &ip)
     {
         CHECK(_listener.CreateServer(port, ip));
         _listen_channel = std::make_unique<Channel>(_listener.GetFd(), _loop);
-        _listen_channel->SetReadCallback([this] { OnAccept(); });
+        _listen_channel->SetReadCallback([this] {
+            OnAccept();
+        });
         _listen_channel->EnableRead();
         _listener_registered = true;
     }
@@ -149,12 +160,30 @@ class EchoServer
     }
 
     // 监听端口为 0 时由内核分配，这里读回真实端口
-    uint16_t Port() const { return ntohs(Address(_listener.GetFd()).sin_port); }
-    int ConnCount() const { return static_cast<int>(_conns.size()); }
-    int ClosedCount() const { return _closed.load(std::memory_order_acquire); }
-    int ReadCalls() const { return _read_calls; }
-    int ReadEvents() const { return _read_events; }
-    int PeakConns() const { return _peak_conns; }
+    uint16_t Port() const
+    {
+        return ntohs(Address(_listener.GetFd()).sin_port);
+    }
+    int ConnCount() const
+    {
+        return static_cast<int>(_conns.size());
+    }
+    int ClosedCount() const
+    {
+        return _closed.load(std::memory_order_acquire);
+    }
+    int ReadCalls() const
+    {
+        return _read_calls;
+    }
+    int ReadEvents() const
+    {
+        return _read_events;
+    }
+    int PeakConns() const
+    {
+        return _peak_conns;
+    }
 
   private:
     struct Conn
@@ -189,9 +218,15 @@ class EchoServer
             auto conn = std::unique_ptr<Conn>(new Conn());
             conn->sock = std::move(accepted);
             conn->channel = std::make_unique<Channel>(fd, _loop);
-            conn->channel->SetReadCallback([this, fd] { OnReadable(fd); });
-            conn->channel->SetErrorCallback([this, fd] { RequestClose(fd); });
-            conn->channel->SetCloseCallback([this, fd] { RequestClose(fd); });
+            conn->channel->SetReadCallback([this, fd] {
+                OnReadable(fd);
+            });
+            conn->channel->SetErrorCallback([this, fd] {
+                RequestClose(fd);
+            });
+            conn->channel->SetCloseCallback([this, fd] {
+                RequestClose(fd);
+            });
             conn->channel->EnableRead();
 
             _conns.emplace(fd, std::move(conn));
@@ -227,7 +262,7 @@ class EchoServer
                 return;
             }
             if (WouldBlock())
-                return; // 本轮已无数据
+                return;       // 本轮已无数据
             RequestClose(fd); // 真实错误
             return;
         }
@@ -262,7 +297,9 @@ class EchoServer
         if (it == _conns.end() || it->second->closing)
             return;
         it->second->closing = true;
-        _loop->QueueInLoop([this, fd] { CloseConn(fd); });
+        _loop->QueueInLoop([this, fd] {
+            CloseConn(fd);
+        });
     }
 
     // 只在 ExecuteTasks 阶段被调用，此时本轮所有 Channel::Handle() 均已返回，
@@ -293,223 +330,227 @@ class EchoServer
 
 namespace
 {
-constexpr std::size_t kWindow = 8 * 1024;
-constexpr std::size_t kLargeTotal = 64 * 1024;
-constexpr int kConcurrentClients = 8;
-constexpr int kSequentialRounds = 64;
+    constexpr std::size_t kWindow = 8 * 1024;
+    constexpr std::size_t kLargeTotal = 64 * 1024;
+    constexpr int kConcurrentClients = 8;
+    constexpr int kSequentialRounds = 64;
 
-Socket Connect(uint16_t port)
-{
-    Socket sock;
-    CHECK(sock.CreateClient(port, "127.0.0.1"));
-    Timeout(sock.GetFd()); // 让阻塞收发有界，回显丢失时报 EAGAIN 而不是挂死
-    return sock;
-}
-
-void SendAllFd(Socket &sock, const char *data, std::size_t len)
-{
-    std::size_t sent = 0;
-    while (sent < len)
+    Socket Connect(uint16_t port)
     {
-        const ssize_t n = sock.Send(data + sent, len - sent);
-        if (n > 0)
+        Socket sock;
+        CHECK(sock.CreateClient(port, "127.0.0.1"));
+        Timeout(sock.GetFd()); // 让阻塞收发有界，回显丢失时报 EAGAIN 而不是挂死
+        return sock;
+    }
+
+    void SendAllFd(Socket &sock, const char *data, std::size_t len)
+    {
+        std::size_t sent = 0;
+        while (sent < len)
         {
-            sent += static_cast<std::size_t>(n);
-            continue;
+            const ssize_t n = sock.Send(data + sent, len - sent);
+            if (n > 0)
+            {
+                sent += static_cast<std::size_t>(n);
+                continue;
+            }
+            throw std::runtime_error("client: send failed errno=" + std::to_string(errno));
         }
-        throw std::runtime_error("client: send failed errno=" + std::to_string(errno));
     }
-}
 
-// 不能用 MSG_WAITALL：SO_RCVTIMEO 到期时会返回部分结果，反而掩盖超时
-void RecvExactly(Socket &sock, char *out, std::size_t len)
-{
-    std::size_t got = 0;
-    while (got < len)
+    // 不能用 MSG_WAITALL：SO_RCVTIMEO 到期时会返回部分结果，反而掩盖超时
+    void RecvExactly(Socket &sock, char *out, std::size_t len)
     {
-        const ssize_t n = sock.Recv(out + got, len - got);
-        if (n > 0)
+        std::size_t got = 0;
+        while (got < len)
         {
-            got += static_cast<std::size_t>(n);
-            continue;
+            const ssize_t n = sock.Recv(out + got, len - got);
+            if (n > 0)
+            {
+                got += static_cast<std::size_t>(n);
+                continue;
+            }
+            if (n == 0)
+                throw std::runtime_error("client: recv 遇到对端提前关闭");
+            throw std::runtime_error("client: recv failed errno=" + std::to_string(errno));
         }
-        if (n == 0)
-            throw std::runtime_error("client: recv 遇到对端提前关闭");
-        throw std::runtime_error("client: recv failed errno=" + std::to_string(errno));
     }
-}
 
-// 服务器侧的回收发生在主线程的 LoopOnce() 里，客户端只能限时等待
-void WaitClosed(const EchoServer &server, int expected)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (server.ClosedCount() < expected)
+    // 服务器侧的回收发生在主线程的 LoopOnce() 里，客户端只能限时等待
+    void WaitClosed(const EchoServer &server, int expected)
     {
-        if (std::chrono::steady_clock::now() > deadline)
-            throw std::runtime_error("等待服务器回收连接超时，期望 " + std::to_string(expected) + " 实得 " +
-                                     std::to_string(server.ClosedCount()));
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (server.ClosedCount() < expected)
+        {
+            if (std::chrono::steady_clock::now() > deadline)
+                throw std::runtime_error("等待服务器回收连接超时，期望 " + std::to_string(expected) + " 实得 " +
+                                         std::to_string(server.ClosedCount()));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
-}
 
-// S1 并发独立回显：每个连接一份内容不同的载荷，回显串台必然被逐字节比对抓到
-void ConcurrentEcho(uint16_t port)
-{
-    std::vector<Socket> clients;
-    clients.reserve(kConcurrentClients);
-    for (int i = 0; i < kConcurrentClients; ++i)
-        clients.push_back(Connect(port));
-
-    std::array<char, 256> payload{};
-    for (int i = 0; i < kConcurrentClients; ++i)
+    // S1 并发独立回显：每个连接一份内容不同的载荷，回显串台必然被逐字节比对抓到
+    void ConcurrentEcho(uint16_t port)
     {
-        payload.fill(static_cast<char>('A' + i));
-        SendAllFd(clients[i], payload.data(), payload.size());
-    }
+        std::vector<Socket> clients;
+        clients.reserve(kConcurrentClients);
+        for (int i = 0; i < kConcurrentClients; ++i)
+            clients.push_back(Connect(port));
 
-    std::array<char, 256> echo{};
-    for (int i = 0; i < kConcurrentClients; ++i)
-    {
-        payload.fill(static_cast<char>('A' + i)); // 重建期望值
-        echo.fill(0);
-        RecvExactly(clients[i], echo.data(), echo.size());
-        CHECK(echo == payload);
-    }
-} // 8 个连接在此析构关闭
+        std::array<char, 256> payload{};
+        for (int i = 0; i < kConcurrentClients; ++i)
+        {
+            payload.fill(static_cast<char>('A' + i));
+            SendAllFd(clients[i], payload.data(), payload.size());
+        }
 
-// S2 大载荷：分窗口发送，每窗先读完回显。服务器读缓冲只有 4096，
-// 因此只有读回调真的排空到 EAGAIN 才能在本轮读完。
-void LargeEcho(uint16_t port)
-{
-    Socket client = Connect(port);
-    std::array<char, kWindow> window{};
-    std::array<char, kWindow> echo{};
+        std::array<char, 256> echo{};
+        for (int i = 0; i < kConcurrentClients; ++i)
+        {
+            payload.fill(static_cast<char>('A' + i)); // 重建期望值
+            echo.fill(0);
+            RecvExactly(clients[i], echo.data(), echo.size());
+            CHECK(echo == payload);
+        }
+    } // 8 个连接在此析构关闭
 
-    for (std::size_t base = 0; base < kLargeTotal; base += kWindow)
-    {
-        for (std::size_t i = 0; i < window.size(); ++i)
-            window[i] = static_cast<char>((base + i) % 251);
-        SendAllFd(client, window.data(), window.size());
-
-        echo.fill(0);
-        RecvExactly(client, echo.data(), echo.size());
-        CHECK(echo == window);
-    }
-}
-
-// S4 连续 accept 与 fd 号复用：上一连接关闭后其 fd 号会被下一个复用，
-// 这是"先 Remove 再 close"纪律的最强回归——漏掉 Remove 或顺序颠倒，
-// 复用的 fd 号撞上残留表项会让 AddEvent 抛 logic_error 并 terminate。
-void SequentialEcho(uint16_t port)
-{
-    for (int i = 0; i < kSequentialRounds; ++i)
+    // S2 大载荷：分窗口发送，每窗先读完回显。服务器读缓冲只有 4096，
+    // 因此只有读回调真的排空到 EAGAIN 才能在本轮读完。
+    void LargeEcho(uint16_t port)
     {
         Socket client = Connect(port);
-        std::array<char, 32> payload{};
-        payload.fill(static_cast<char>('a' + (i % 26)));
-        SendAllFd(client, payload.data(), payload.size());
+        std::array<char, kWindow> window{};
+        std::array<char, kWindow> echo{};
 
-        std::array<char, 32> echo{};
-        RecvExactly(client, echo.data(), echo.size());
-        CHECK(echo == payload);
+        for (std::size_t base = 0; base < kLargeTotal; base += kWindow)
+        {
+            for (std::size_t i = 0; i < window.size(); ++i)
+                window[i] = static_cast<char>((base + i) % 251);
+            SendAllFd(client, window.data(), window.size());
+
+            echo.fill(0);
+            RecvExactly(client, echo.data(), echo.size());
+            CHECK(echo == window);
+        }
     }
-}
 
-// S5 空连接：连上立刻关闭、不发数据
-void EmptyConnection(uint16_t port) { Socket client = Connect(port); }
-
-void RunClientScenarios(uint16_t port, const EchoServer &server)
-{
-    int expected_closed = 0;
-
-    ConcurrentEcho(port);
-    expected_closed += kConcurrentClients;
-    WaitClosed(server, expected_closed);
-
-    LargeEcho(port);
-    ++expected_closed;
-    WaitClosed(server, expected_closed);
-
-    SequentialEcho(port);
-    expected_closed += kSequentialRounds;
-    WaitClosed(server, expected_closed);
-
-    EmptyConnection(port);
-    ++expected_closed;
-    WaitClosed(server, expected_closed);
-}
-
-void RunIntegration()
-{
-    EventLoop loop; // 最先声明 → 最后析构
-    EchoServer server(&loop);
-    server.Start(0, "127.0.0.1"); // 端口交给内核分配
-    const uint16_t port = server.Port();
-
-    std::atomic<bool> stop{false};
-    std::exception_ptr client_error;
-
-    std::thread client([&] {
-        try
-        {
-            RunClientScenarios(port, server);
-        }
-        catch (...)
-        {
-            client_error = std::current_exception();
-        }
-        // 先置位再唤醒。eventfd 是水平触发的计数器，写进去的计数在被消费前一直可读，
-        // 因此无论主线程此刻是还没进入 LoopOnce() 还是已经阻塞在 epoll_wait，
-        // 这一次唤醒都不会丢失，两种时序都收敛。
-        stop.store(true, std::memory_order_release);
-        loop.QueueInLoop([] {});
-    });
-
-    // 守卫声明在 loop 之后 → 先于 loop 析构，保证异常回退路径上也一定 join。
-    // 主线程若在 LoopOnce() 内因断言失败抛出，栈回退会先析构守卫，
-    // 此时 loop 仍然存活，不存在子线程还在用一个已死 loop 的路径。
-    struct JoinGuard
+    // S4 连续 accept 与 fd 号复用：上一连接关闭后其 fd 号会被下一个复用，
+    // 这是"先 Remove 再 close"纪律的最强回归——漏掉 Remove 或顺序颠倒，
+    // 复用的 fd 号撞上残留表项会让 AddEvent 抛 logic_error 并 terminate。
+    void SequentialEcho(uint16_t port)
     {
-        std::thread &thread;
-        ~JoinGuard()
+        for (int i = 0; i < kSequentialRounds; ++i)
         {
-            if (thread.joinable())
-                thread.join();
+            Socket client = Connect(port);
+            std::array<char, 32> payload{};
+            payload.fill(static_cast<char>('a' + (i % 26)));
+            SendAllFd(client, payload.data(), payload.size());
+
+            std::array<char, 32> echo{};
+            RecvExactly(client, echo.data(), echo.size());
+            CHECK(echo == payload);
         }
-    } guard{client};
-
-    while (!stop.load(std::memory_order_acquire))
-        loop.LoopOnce();
-
-    client.join(); // join 之后子线程不可能再触碰 loop
-
-    // 以下三个量都是 loop 线程写的，与读它们的线程相同，天然无竞争
-    CHECK(server.ConnCount() == 0);
-    CHECK(server.PeakConns() == kConcurrentClients);
-    // 读回调若只 Recv 一次就返回，两个计数会严格相等；排空到 EAGAIN 才会大于
-    CHECK(server.ReadCalls() > server.ReadEvents());
-
-    server.Stop();
-
-    if (client_error)
-        std::rethrow_exception(client_error);
-}
-
-// 取基线前先跑一次完整的建连/拆除，让一次性的惰性分配先发生，避免误报。
-// 这里刻意不进入 LoopOnce()：目的只是让相关系统调用路径都跑过一遍。
-int WarmupAndBaseline()
-{
-    {
-        EventLoop loop;
-        Socket listener;
-        CHECK(listener.CreateServer(0, "127.0.0.1"));
-        Socket client;
-        CHECK(client.CreateClient(ntohs(Address(listener.GetFd()).sin_port), "127.0.0.1"));
-        Socket accepted(listener.Accept());
-        CHECK(accepted.GetFd() >= 0);
     }
-    return CountOpenFds();
-}
+
+    // S5 空连接：连上立刻关闭、不发数据
+    void EmptyConnection(uint16_t port)
+    {
+        Socket client = Connect(port);
+    }
+
+    void RunClientScenarios(uint16_t port, const EchoServer &server)
+    {
+        int expected_closed = 0;
+
+        ConcurrentEcho(port);
+        expected_closed += kConcurrentClients;
+        WaitClosed(server, expected_closed);
+
+        LargeEcho(port);
+        ++expected_closed;
+        WaitClosed(server, expected_closed);
+
+        SequentialEcho(port);
+        expected_closed += kSequentialRounds;
+        WaitClosed(server, expected_closed);
+
+        EmptyConnection(port);
+        ++expected_closed;
+        WaitClosed(server, expected_closed);
+    }
+
+    void RunIntegration()
+    {
+        EventLoop loop; // 最先声明 → 最后析构
+        EchoServer server(&loop);
+        server.Start(0, "127.0.0.1"); // 端口交给内核分配
+        const uint16_t port = server.Port();
+
+        std::atomic<bool> stop{false};
+        std::exception_ptr client_error;
+
+        std::thread client([&] {
+            try
+            {
+                RunClientScenarios(port, server);
+            }
+            catch (...)
+            {
+                client_error = std::current_exception();
+            }
+            // 先置位再唤醒。eventfd 是水平触发的计数器，写进去的计数在被消费前一直可读，
+            // 因此无论主线程此刻是还没进入 LoopOnce() 还是已经阻塞在 epoll_wait，
+            // 这一次唤醒都不会丢失，两种时序都收敛。
+            stop.store(true, std::memory_order_release);
+            loop.QueueInLoop([] {
+            });
+        });
+
+        // 守卫声明在 loop 之后 → 先于 loop 析构，保证异常回退路径上也一定 join。
+        // 主线程若在 LoopOnce() 内因断言失败抛出，栈回退会先析构守卫，
+        // 此时 loop 仍然存活，不存在子线程还在用一个已死 loop 的路径。
+        struct JoinGuard
+        {
+            std::thread &thread;
+            ~JoinGuard()
+            {
+                if (thread.joinable())
+                    thread.join();
+            }
+        } guard{client};
+
+        while (!stop.load(std::memory_order_acquire))
+            loop.LoopOnce();
+
+        client.join(); // join 之后子线程不可能再触碰 loop
+
+        // 以下三个量都是 loop 线程写的，与读它们的线程相同，天然无竞争
+        CHECK(server.ConnCount() == 0);
+        CHECK(server.PeakConns() == kConcurrentClients);
+        // 读回调若只 Recv 一次就返回，两个计数会严格相等；排空到 EAGAIN 才会大于
+        CHECK(server.ReadCalls() > server.ReadEvents());
+
+        server.Stop();
+
+        if (client_error)
+            std::rethrow_exception(client_error);
+    }
+
+    // 取基线前先跑一次完整的建连/拆除，让一次性的惰性分配先发生，避免误报。
+    // 这里刻意不进入 LoopOnce()：目的只是让相关系统调用路径都跑过一遍。
+    int WarmupAndBaseline()
+    {
+        {
+            EventLoop loop;
+            Socket listener;
+            CHECK(listener.CreateServer(0, "127.0.0.1"));
+            Socket client;
+            CHECK(client.CreateClient(ntohs(Address(listener.GetFd()).sin_port), "127.0.0.1"));
+            Socket accepted(listener.Accept());
+            CHECK(accepted.GetFd() >= 0);
+        }
+        return CountOpenFds();
+    }
 } // namespace
 
 int main()

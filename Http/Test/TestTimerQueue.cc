@@ -45,41 +45,41 @@
 static_assert(!std::is_copy_constructible<TimerWheel>::value, "TimerWheel owns its timerfd");
 static_assert(!std::is_copy_assignable<TimerWheel>::value, "TimerWheel owns its timerfd");
 
-#define CHECK(expr)                                                                                                      \
-    do                                                                                                                   \
-    {                                                                                                                    \
-        if (!(expr))                                                                                                     \
-            throw std::runtime_error(                                                                                    \
-                std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr + " errno=" + std::to_string(errno)); \
+#define CHECK(expr)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+            throw std::runtime_error(std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr +              \
+                                     " errno=" + std::to_string(errno));                                               \
     } while (false)
 
 namespace
 {
-// 看门狗：不用裸 alarm(5)。SIGALRM 的默认动作是直接终止进程，make 只会看到
-// "Alarm clock" 而无法定位是哪条断言挂住。这里只做异步信号安全的 write 与 _exit。
-// 预算放到 30 秒，因为存在合计约 10 秒的真实时间用例。
-void OnAlarm(int)
-{
-    const char message[] = "TIMEOUT: 看门狗超时，疑似阻塞在 LoopOnce() 的 epoll_wait\n";
-    const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
-    (void)ignored;
-    _exit(EXIT_FAILURE);
-}
-
-void ArmWatchdog()
-{
-    struct sigaction action;
-    std::memset(&action, 0, sizeof(action));
-    action.sa_handler = OnAlarm;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0; // 不设 SA_RESTART，让被中断的系统调用返回 EINTR
-    if (sigaction(SIGALRM, &action, nullptr) != 0)
+    // 看门狗：不用裸 alarm(5)。SIGALRM 的默认动作是直接终止进程，make 只会看到
+    // "Alarm clock" 而无法定位是哪条断言挂住。这里只做异步信号安全的 write 与 _exit。
+    // 预算放到 30 秒，因为存在合计约 10 秒的真实时间用例。
+    void OnAlarm(int)
     {
-        std::cerr << "sigaction 失败\n";
-        std::exit(EXIT_FAILURE);
+        const char message[] = "TIMEOUT: 看门狗超时，疑似阻塞在 LoopOnce() 的 epoll_wait\n";
+        const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
+        (void)ignored;
+        _exit(EXIT_FAILURE);
     }
-    alarm(30);
-}
+
+    void ArmWatchdog()
+    {
+        struct sigaction action;
+        std::memset(&action, 0, sizeof(action));
+        action.sa_handler = OnAlarm;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0; // 不设 SA_RESTART，让被中断的系统调用返回 EINTR
+        if (sigaction(SIGALRM, &action, nullptr) != 0)
+        {
+            std::cerr << "sigaction 失败\n";
+            std::exit(EXIT_FAILURE);
+        }
+        alarm(30);
+    }
 } // namespace
 
 // 链接期故障注入：武装后 epoll_ctl 返回 EINVAL，未武装时透传。
@@ -130,7 +130,9 @@ static void ExpireAfterTimeout()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 3, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 3, [&fired]() {
+        ++fired;
+    });
 
     TickN(wheel, 2);
     CHECK(fired == 0);
@@ -148,7 +150,9 @@ static void TimeoutZeroFiresOnNextTick()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 0, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 0, [&fired]() {
+        ++fired;
+    });
 
     // 添加时不就地同步回调，最小精度就是一个 tick
     CHECK(fired == 0);
@@ -162,7 +166,9 @@ static void TimeoutAtCapacityFiresOnFullRevolution()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 60, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 60, [&fired]() {
+        ++fired;
+    });
 
     TickN(wheel, 59);
     CHECK(fired == 0);
@@ -177,7 +183,9 @@ static void TimeoutAboveCapacityIsClamped()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 61, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 61, [&fired]() {
+        ++fired;
+    });
 
     TickN(wheel, 1);
     CHECK(fired == 0);
@@ -194,7 +202,9 @@ static void IndexWrapsAroundWheel()
     TimerWheel wheel(&loop);
     int fired = 0;
     TickN(wheel, 58); // _tick == 58
-    wheel.TimerAddInLoop(1, 2, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 2, [&fired]() {
+        ++fired;
+    });
 
     TickN(wheel, 1); // _tick == 59，未到
     CHECK(fired == 0);
@@ -208,7 +218,9 @@ static void CancelPreventsCallback()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 2, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 2, [&fired]() {
+        ++fired;
+    });
     wheel.TimerCancelInLoop(1);
 
     TickN(wheel, 4);
@@ -221,7 +233,9 @@ static void UnknownIdIsNoop()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 1, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 1, [&fired]() {
+        ++fired;
+    });
 
     wheel.TimerCancelInLoop(999);
     wheel.TimerRefreshInLoop(999);
@@ -236,7 +250,9 @@ static void RefreshReschedulesFromCurrentTick()
     EventLoop loop;
     TimerWheel wheel(&loop);
     int fired = 0;
-    wheel.TimerAddInLoop(1, 3, [&fired]() { ++fired; });
+    wheel.TimerAddInLoop(1, 3, [&fired]() {
+        ++fired;
+    });
 
     wheel.Tick();                // _tick == 1
     wheel.TimerRefreshInLoop(1); // 落点重算为 (1 + 3) % 60 == 4
@@ -258,14 +274,18 @@ static void ReAddSameIdAfterExpiry()
     TimerWheel wheel(&loop);
     int first = 0;
     int second = 0;
-    wheel.TimerAddInLoop(1, 1, [&first]() { ++first; });
+    wheel.TimerAddInLoop(1, 1, [&first]() {
+        ++first;
+    });
     wheel.Tick();
     CHECK(first == 1);
 
     wheel.TimerRefreshInLoop(1); // 已到期并移除：直接返回
     wheel.TimerCancelInLoop(1);
 
-    wheel.TimerAddInLoop(1, 1, [&second]() { ++second; });
+    wheel.TimerAddInLoop(1, 1, [&second]() {
+        ++second;
+    });
     wheel.Tick();
     CHECK(second == 1);
 }
@@ -277,8 +297,12 @@ static void ReAddSameIdReplacesOldTask()
     TimerWheel wheel(&loop);
     int old_fired = 0;
     int new_fired = 0;
-    wheel.TimerAddInLoop(1, 1, [&old_fired]() { ++old_fired; }); // 原定第 1 次 Tick 触发
-    wheel.TimerAddInLoop(1, 3, [&new_fired]() { ++new_fired; }); // 重启，改到第 3 次
+    wheel.TimerAddInLoop(1, 1, [&old_fired]() {
+        ++old_fired;
+    }); // 原定第 1 次 Tick 触发
+    wheel.TimerAddInLoop(1, 3, [&new_fired]() {
+        ++new_fired;
+    }); // 重启，改到第 3 次
 
     TickN(wheel, 1); // 旧任务的原定到期点
     CHECK(old_fired == 0);
@@ -298,19 +322,25 @@ static void IndexSurvivesOldTaskCleanup()
     int new2_fired = 0;
 
     // id=1 用来验证替换后取消仍然有效
-    wheel.TimerAddInLoop(1, 1, []() {});                           // 旧任务，落点 slot 1
-    wheel.TimerAddInLoop(1, 5, [&new1_fired]() { ++new1_fired; }); // 新任务，落点 slot 5
+    wheel.TimerAddInLoop(1, 1, []() {
+    }); // 旧任务，落点 slot 1
+    wheel.TimerAddInLoop(1, 5, [&new1_fired]() {
+        ++new1_fired;
+    }); // 新任务，落点 slot 5
 
     // id=2 用来验证替换后刷新仍然有效
-    wheel.TimerAddInLoop(2, 1, []() {});                           // 旧任务，落点 slot 1
-    wheel.TimerAddInLoop(2, 5, [&new2_fired]() { ++new2_fired; }); // 新任务，落点 slot 5
+    wheel.TimerAddInLoop(2, 1, []() {
+    }); // 旧任务，落点 slot 1
+    wheel.TimerAddInLoop(2, 5, [&new2_fired]() {
+        ++new2_fired;
+    }); // 新任务，落点 slot 5
 
     wheel.Tick(); // _tick == 1：两个旧任务在此销毁，各自执行一次清理
 
     wheel.TimerCancelInLoop(1);  // 必须仍能找到 id=1 的新任务
     wheel.TimerRefreshInLoop(2); // 必须仍能找到 id=2 的新任务，重算为 (1 + 5) % 60 == 6
 
-    TickN(wheel, 4); // _tick == 5：新任务的原定到期点
+    TickN(wheel, 4);        // _tick == 5：新任务的原定到期点
     CHECK(new1_fired == 0); // 取消生效
     CHECK(new2_fired == 0); // 刷新已把它顺延走
 
@@ -326,7 +356,9 @@ static void DestructorCancelsPendingTasks()
     int fired = 0;
     {
         TimerWheel wheel(&loop);
-        wheel.TimerAddInLoop(1, 3, [&fired]() { ++fired; });
+        wheel.TimerAddInLoop(1, 3, [&fired]() {
+            ++fired;
+        });
         wheel.Tick();
     } // ~TimerWheel
 
@@ -344,7 +376,9 @@ static void DestructorReleasesTimerfd()
     {
         TimerWheel wheel(&loop);
         int fired = 0;
-        wheel.TimerAddInLoop(1, 1, [&fired]() { ++fired; });
+        wheel.TimerAddInLoop(1, 1, [&fired]() {
+            ++fired;
+        });
         wheel.Tick();
         CHECK(fired == 1);
     }
@@ -403,14 +437,18 @@ static void LoopDrivenExpiry()
     EventLoop loop;
     int fired1 = 0;
     int fired2 = 0;
-    loop.TimerAdd(1, 1, [&fired1]() { ++fired1; });
-    loop.TimerAdd(2, 2, [&fired2]() { ++fired2; });
+    loop.TimerAdd(1, 1, [&fired1]() {
+        ++fired1;
+    });
+    loop.TimerAdd(2, 2, [&fired2]() {
+        ++fired2;
+    });
 
-    loop.LoopOnce(); //约 1 秒
+    loop.LoopOnce(); // 约 1 秒
     CHECK(fired1 == 1);
     CHECK(fired2 == 0);
 
-    loop.LoopOnce(); //约 1 秒
+    loop.LoopOnce(); // 约 1 秒
     CHECK(fired2 == 1);
     CHECK(fired1 == 1); // 只触发一次
 }
@@ -420,11 +458,13 @@ static void LoopDrivenCancel()
 {
     EventLoop loop;
     int fired = 0;
-    loop.TimerAdd(1, 1, [&fired]() { ++fired; });
+    loop.TimerAdd(1, 1, [&fired]() {
+        ++fired;
+    });
     loop.TimerCancel(1);
 
-    loop.LoopOnce(); //约 1 秒
-    loop.LoopOnce(); //约 1 秒
+    loop.LoopOnce(); // 约 1 秒
+    loop.LoopOnce(); // 约 1 秒
     CHECK(fired == 0);
 }
 
@@ -433,15 +473,17 @@ static void LoopDrivenRefresh()
 {
     EventLoop loop;
     int fired = 0;
-    loop.TimerAdd(1, 2, [&fired]() { ++fired; }); // 原定第 2 秒到期
+    loop.TimerAdd(1, 2, [&fired]() {
+        ++fired;
+    }); // 原定第 2 秒到期
 
-    loop.LoopOnce(); //第 1 秒
+    loop.LoopOnce(); // 第 1 秒
     CHECK(fired == 0);
     loop.TimerRefresh(1); // 从当前刻度重新计时，顺延到第 3 秒
 
-    loop.LoopOnce(); //第 2 秒，原定到期时刻
+    loop.LoopOnce(); // 第 2 秒，原定到期时刻
     CHECK(fired == 0);
-    loop.LoopOnce(); //第 3 秒
+    loop.LoopOnce(); // 第 3 秒
     CHECK(fired == 1);
 }
 
@@ -451,7 +493,9 @@ static void CatchUpAfterStall()
 {
     EventLoop loop;
     int fired = 0;
-    loop.TimerAdd(1, 3, [&fired]() { ++fired; });
+    loop.TimerAdd(1, 3, [&fired]() {
+        ++fired;
+    });
 
     // 不调用 LoopOnce()，让 timerfd 累积至少 3 次到期。
     // 0.2 秒余量用于避开"第 3 次到期恰好卡在睡眠结束瞬间"的边界抖动。
@@ -461,7 +505,7 @@ static void CatchUpAfterStall()
     CHECK(nanosleep(&stall, nullptr) == 0);
     CHECK(fired == 0); // 没有事件分发，回调不可能跑
 
-    loop.LoopOnce(); //一次读入 3 次到期，推进 3 格
+    loop.LoopOnce(); // 一次读入 3 次到期，推进 3 格
     CHECK(fired == 1);
 }
 

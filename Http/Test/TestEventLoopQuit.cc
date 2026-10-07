@@ -39,7 +39,9 @@ static void QuitBeforeLoop()
 {
     EventLoop loop;
     bool called = false;
-    loop.QueueInLoop([&]() { called = true; });
+    loop.QueueInLoop([&]() {
+        called = true;
+    });
     loop.Quit();
     loop.Quit();
     loop.Loop();
@@ -56,9 +58,13 @@ static void FinishCurrentBatch()
     loop.QueueInLoop([&]() {
         ++completed;
         loop.Quit();
-        loop.QueueInLoop([&]() { later = true; });
+        loop.QueueInLoop([&]() {
+            later = true;
+        });
     });
-    loop.QueueInLoop([&]() { ++completed; });
+    loop.QueueInLoop([&]() {
+        ++completed;
+    });
     loop.Loop();
     assert(completed == 2);
     assert(!later);
@@ -73,15 +79,29 @@ static void CrossThreadQuit()
     std::exception_ptr worker_error;
     std::thread worker([&]() {
         ready.wait();
-        try { loop.Quit(); }
-        catch (...) { worker_error = std::current_exception(); }
+        try
+        {
+            loop.Quit();
+        }
+        catch (...)
+        {
+            worker_error = std::current_exception();
+        }
     });
     std::exception_ptr loop_error;
-    try { loop.Loop(); }
-    catch (...) { loop_error = std::current_exception(); }
+    try
+    {
+        loop.Loop();
+    }
+    catch (...)
+    {
+        loop_error = std::current_exception();
+    }
     worker.join(); // 对象销毁之前，确保 Quit 已返回。
-    if (worker_error) std::rethrow_exception(worker_error);
-    if (loop_error) std::rethrow_exception(loop_error);
+    if (worker_error)
+        std::rethrow_exception(worker_error);
+    if (loop_error)
+        std::rethrow_exception(loop_error);
 }
 
 int main()

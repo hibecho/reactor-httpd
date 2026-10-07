@@ -126,21 +126,45 @@ void Errors()
     const std::size_t read = b.GetPrependableSize(), write = b.GetWritableSize();
     char dest[8];
     std::memset(dest, '!', sizeof(dest));
-    Throws<std::out_of_range>([&] { b.Peek(dest, 5); });
-    Throws<std::out_of_range>([&] { b.Read(dest, 5); });
+    Throws<std::out_of_range>([&] {
+        b.Peek(dest, 5);
+    });
+    Throws<std::out_of_range>([&] {
+        b.Read(dest, 5);
+    });
     for (char c : dest)
         CHECK(c == '!');
-    Throws<std::out_of_range>([&] { b.MoveReadOffset(5); });
-    Throws<std::out_of_range>([&] { b.MoveWriteOffset(write + 1); });
-    Throws<std::out_of_range>([&] { b.PeekAsString(5); });
-    Throws<std::out_of_range>([&] { b.ReadAsString(5); });
-    Throws<std::invalid_argument>([&] { b.Write(nullptr, 1); });
-    Throws<std::invalid_argument>([&] { b.Peek(nullptr, 1); });
-    Throws<std::invalid_argument>([&] { b.Read(nullptr, 1); });
+    Throws<std::out_of_range>([&] {
+        b.MoveReadOffset(5);
+    });
+    Throws<std::out_of_range>([&] {
+        b.MoveWriteOffset(write + 1);
+    });
+    Throws<std::out_of_range>([&] {
+        b.PeekAsString(5);
+    });
+    Throws<std::out_of_range>([&] {
+        b.ReadAsString(5);
+    });
+    Throws<std::invalid_argument>([&] {
+        b.Write(nullptr, 1);
+    });
+    Throws<std::invalid_argument>([&] {
+        b.Peek(nullptr, 1);
+    });
+    Throws<std::invalid_argument>([&] {
+        b.Read(nullptr, 1);
+    });
     const std::size_t huge = std::numeric_limits<std::size_t>::max();
-    Throws<std::length_error>([&] { b.EnsureWritableSize(huge); });
-    Throws<std::length_error>([&] { b.Write("x", huge); });
-    Throws<std::out_of_range>([&] { b.Read(dest, huge); });
+    Throws<std::length_error>([&] {
+        b.EnsureWritableSize(huge);
+    });
+    Throws<std::length_error>([&] {
+        b.Write("x", huge);
+    });
+    Throws<std::out_of_range>([&] {
+        b.Read(dest, huge);
+    });
     CHECK(b.GetPrependableSize() == read && b.GetWritableSize() == write);
     Check(b, "cdef");
 }

@@ -35,40 +35,40 @@
 static_assert(!std::is_copy_constructible<EventLoop>::value, "EventLoop owns its eventfd");
 static_assert(!std::is_copy_assignable<EventLoop>::value, "EventLoop owns its eventfd");
 
-#define CHECK(expr)                                                                                                      \
-    do                                                                                                                   \
-    {                                                                                                                    \
-        if (!(expr))                                                                                                     \
-            throw std::runtime_error(                                                                                    \
-                std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr + " errno=" + std::to_string(errno)); \
+#define CHECK(expr)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expr))                                                                                                   \
+            throw std::runtime_error(std::string(__func__) + ":" + std::to_string(__LINE__) + " " #expr +              \
+                                     " errno=" + std::to_string(errno));                                               \
     } while (false)
 
 namespace
 {
-// 看门狗：不用裸 alarm(5)。SIGALRM 的默认动作是直接终止进程，make 只会看到
-// "Alarm clock" 而无法定位是哪条断言挂住。这里只做异步信号安全的 write 与 _exit。
-void OnAlarm(int)
-{
-    const char message[] = "TIMEOUT: 5 秒内未完成，疑似阻塞在 LoopOnce() 的 epoll_wait\n";
-    const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
-    (void)ignored;
-    _exit(EXIT_FAILURE);
-}
-
-void ArmWatchdog()
-{
-    struct sigaction action;
-    std::memset(&action, 0, sizeof(action));
-    action.sa_handler = OnAlarm;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0; // 不设 SA_RESTART，让被中断的系统调用返回 EINTR
-    if (sigaction(SIGALRM, &action, nullptr) != 0)
+    // 看门狗：不用裸 alarm(5)。SIGALRM 的默认动作是直接终止进程，make 只会看到
+    // "Alarm clock" 而无法定位是哪条断言挂住。这里只做异步信号安全的 write 与 _exit。
+    void OnAlarm(int)
     {
-        std::cerr << "sigaction 失败\n";
-        std::exit(EXIT_FAILURE);
+        const char message[] = "TIMEOUT: 5 秒内未完成，疑似阻塞在 LoopOnce() 的 epoll_wait\n";
+        const ssize_t ignored = write(STDERR_FILENO, message, sizeof(message) - 1);
+        (void)ignored;
+        _exit(EXIT_FAILURE);
     }
-    alarm(5);
-}
+
+    void ArmWatchdog()
+    {
+        struct sigaction action;
+        std::memset(&action, 0, sizeof(action));
+        action.sa_handler = OnAlarm;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0; // 不设 SA_RESTART，让被中断的系统调用返回 EINTR
+        if (sigaction(SIGALRM, &action, nullptr) != 0)
+        {
+            std::cerr << "sigaction 失败\n";
+            std::exit(EXIT_FAILURE);
+        }
+        alarm(5);
+    }
 } // namespace
 
 // 链接期故障注入：武装后 timerfd_create 返回 EMFILE，未武装时透传。
@@ -100,8 +100,7 @@ static int CountOpenFds()
     return count;
 }
 
-template <class Action>
-static bool ThrowsLogicError(Action action)
+template <class Action> static bool ThrowsLogicError(Action action)
 {
     try
     {
@@ -141,7 +140,9 @@ static void ConstructAndThreadIdentity()
     CHECK(loop.IsInLoopThread());
 
     std::atomic<bool> same_from_worker(true);
-    std::thread worker([&loop, &same_from_worker]() { same_from_worker.store(loop.IsInLoopThread()); });
+    std::thread worker([&loop, &same_from_worker]() {
+        same_from_worker.store(loop.IsInLoopThread());
+    });
     worker.join();
     CHECK(!same_from_worker.load());
 }
@@ -151,8 +152,12 @@ static void RunInLoopSameThread()
 {
     EventLoop loop;
     std::string order;
-    loop.RunInLoop([&order]() { order += 'A'; });
-    loop.RunInLoop([&order]() { order += 'B'; });
+    loop.RunInLoop([&order]() {
+        order += 'A';
+    });
+    loop.RunInLoop([&order]() {
+        order += 'B';
+    });
     CHECK(order == "AB");
 }
 
@@ -161,7 +166,9 @@ static void QueueInLoopDefersUntilLoop()
 {
     EventLoop loop;
     bool ran = false;
-    loop.QueueInLoop([&ran]() { ran = true; });
+    loop.QueueInLoop([&ran]() {
+        ran = true;
+    });
     CHECK(!ran);
 
     loop.LoopOnce();
@@ -198,7 +205,9 @@ static void BatchQueueInLoop()
     const int count = 8;
     int executed = 0;
     for (int i = 0; i < count; ++i)
-        loop.QueueInLoop([&executed, i]() { executed += i + 1; });
+        loop.QueueInLoop([&executed, i]() {
+            executed += i + 1;
+        });
     loop.LoopOnce();
     CHECK(executed == count * (count + 1) / 2);
 }
@@ -208,7 +217,11 @@ static void TaskQueueSwapSemantics()
 {
     EventLoop loop;
     bool second_ran = false;
-    loop.QueueInLoop([&loop, &second_ran]() { loop.QueueInLoop([&second_ran]() { second_ran = true; }); });
+    loop.QueueInLoop([&loop, &second_ran]() {
+        loop.QueueInLoop([&second_ran]() {
+            second_ran = true;
+        });
+    });
 
     loop.LoopOnce();
     CHECK(!second_ran);
@@ -225,10 +238,14 @@ static void EventsBeforeTasks()
     const int fd = MakeEventfd();
     Channel channel(fd, &loop);
     std::string order;
-    channel.SetReadCallback([&order]() { order += 'C'; });
+    channel.SetReadCallback([&order]() {
+        order += 'C';
+    });
     channel.EnableRead();
 
-    loop.QueueInLoop([&order]() { order += 'T'; });
+    loop.QueueInLoop([&order]() {
+        order += 'T';
+    });
     Notify(fd);
 
     loop.LoopOnce();
@@ -246,8 +263,12 @@ static void ModifyPath()
     Channel channel(fd, &loop);
     bool readable = false;
     bool writable = false;
-    channel.SetReadCallback([&readable]() { readable = true; });
-    channel.SetWriteCallback([&writable]() { writable = true; });
+    channel.SetReadCallback([&readable]() {
+        readable = true;
+    });
+    channel.SetWriteCallback([&writable]() {
+        writable = true;
+    });
     channel.EnableRead();
 
     // 改为只监听可写：eventfd 恒可写，无需写入即可就绪
@@ -269,8 +290,12 @@ static void RemovePath()
     const int fd = MakeEventfd();
     Channel channel(fd, &loop);
     bool called = false;
-    channel.SetReadCallback([&called]() { called = true; });
-    channel.SetEventCallback([&called]() { called = true; });
+    channel.SetReadCallback([&called]() {
+        called = true;
+    });
+    channel.SetEventCallback([&called]() {
+        called = true;
+    });
     channel.EnableRead();
 
     channel.Remove();
@@ -278,7 +303,9 @@ static void RemovePath()
     // fd 仍可读但已从 Epoller 摘除，必须补一个任务作为独立唤醒源
     Notify(fd);
     bool woke = false;
-    loop.QueueInLoop([&woke]() { woke = true; });
+    loop.QueueInLoop([&woke]() {
+        woke = true;
+    });
 
     loop.LoopOnce();
     CHECK(woke);
@@ -295,7 +322,9 @@ static void RemoveIsIdentityChecked()
     Channel channel(fd, &loop);
     channel.EnableRead();
     channel.Remove();
-    CHECK(ThrowsLogicError([&channel]() { channel.Remove(); }));
+    CHECK(ThrowsLogicError([&channel]() {
+        channel.Remove();
+    }));
 
     CHECK(close(fd) == 0);
 }

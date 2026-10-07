@@ -22,39 +22,39 @@
 
 namespace
 {
-std::string Read(const std::string &path)
-{
-    std::ifstream in(path);
-    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
-struct TempDirectory
-{
-    std::string path;
-    TempDirectory()
+    std::string Read(const std::string &path)
     {
-        char name[] = "/tmp/http-logger-XXXXXX";
-        char *result = mkdtemp(name);
-        if (!result)
-            throw std::runtime_error("mkdtemp failed");
-        path = result;
+        std::ifstream in(path);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
-    ~TempDirectory()
+    struct TempDirectory
     {
-        Logger::Instance().Shutdown();
-        DIR *dir = opendir(path.c_str());
-        if (dir)
+        std::string path;
+        TempDirectory()
         {
-            while (dirent *entry = readdir(dir))
-            {
-                std::string name = entry->d_name;
-                if (name != "." && name != "..")
-                    unlink((path + "/" + name).c_str());
-            }
-            closedir(dir);
+            char name[] = "/tmp/http-logger-XXXXXX";
+            char *result = mkdtemp(name);
+            if (!result)
+                throw std::runtime_error("mkdtemp failed");
+            path = result;
         }
-        rmdir(path.c_str());
-    }
-};
+        ~TempDirectory()
+        {
+            Logger::Instance().Shutdown();
+            DIR *dir = opendir(path.c_str());
+            if (dir)
+            {
+                while (dirent *entry = readdir(dir))
+                {
+                    std::string name = entry->d_name;
+                    if (name != "." && name != "..")
+                        unlink((path + "/" + name).c_str());
+                }
+                closedir(dir);
+            }
+            rmdir(path.c_str());
+        }
+    };
 } // namespace
 
 void TestLoggerMode(bool async)

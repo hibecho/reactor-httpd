@@ -108,9 +108,15 @@ int main()
                         close_connection(conn);
                     }
                 });
-                conn->channel.SetWriteCallback([&, conn] { flush(conn); });
-                conn->channel.SetErrorCallback([&, conn] { close_connection(conn); });
-                conn->channel.SetCloseCallback([&, conn] { close_connection(conn); });
+                conn->channel.SetWriteCallback([&, conn] {
+                    flush(conn);
+                });
+                conn->channel.SetErrorCallback([&, conn] {
+                    close_connection(conn);
+                });
+                conn->channel.SetCloseCallback([&, conn] {
+                    close_connection(conn);
+                });
                 connections.emplace(fd, std::move(owner));
                 conn->channel.EnableRead();
             }
